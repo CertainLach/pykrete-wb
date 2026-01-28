@@ -18,12 +18,9 @@ use std::mem::{MaybeUninit, transmute};
 use std::ops::{BitXor, BitXorAssign, Index, IndexMut};
 use std::{array, fmt};
 
-use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens, format_ident, quote};
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
-use syn::LitByteStr;
 use zeroize::Zeroize;
 
 use crate::dual::{Dual, MixColCoeffs, Q};
@@ -536,16 +533,6 @@ impl U2 {
 		Self::ALL[index]
 	}
 }
-impl ToTokens for U2 {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
-		tokens.extend(match self {
-			U2::_0 => quote!(U2::_0),
-			U2::_1 => quote!(U2::_1),
-			U2::_2 => quote!(U2::_2),
-			U2::_3 => quote!(U2::_3),
-		})
-	}
-}
 impl BitXor for U2 {
 	type Output = U2;
 
@@ -620,15 +607,6 @@ impl U4 {
 impl fmt::Debug for U4 {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "{:x}", self.as_index())
-	}
-}
-impl ToTokens for U4 {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
-		let i = self.as_index();
-		let i = format_ident!("_{i}");
-		tokens.extend(quote! {
-			U4::#i
-		})
 	}
 }
 impl BitXor for U4 {
@@ -882,17 +860,6 @@ impl XArr<X> {
 			.enumerate()
 			.for_each(|(i, p)| *p = map(X(i as u8)));
 		Self(out)
-	}
-}
-impl ToTokens for XArr<X> {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
-		let b = LitByteStr::new(
-			unsafe { std::mem::transmute::<&[X; 256], &[u8; 256]>(&self.0) }.as_slice(),
-			Span::call_site(),
-		);
-		tokens.extend(quote! {
-			::wbaes::XArr::new_static(*#b)
-		});
 	}
 }
 
