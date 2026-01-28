@@ -246,9 +246,9 @@ pub fn vmout<const NRM1: usize>(
 	no_reorder: bool,
 ) {
 	let mut vm = VM::default();
-	if matches!(lang, Language::Java) {
-		vm.use_select_nibble = true;
-	}
+	// if matches!(lang, Language::Java) {
+	// 	vm.use_select_nibble = true;
+	// }
 	let mut state = StateMap::from_fn(|i| vm.load_state(i.as_index()));
 
 	let shift_rows = if tables.inv {
@@ -388,7 +388,7 @@ pub fn vmout<const NRM1: usize>(
 		.flat_map(|v| &v.data)
 		.copied()
 		.collect::<Vec<u8>>();
-	let mut reg = RegAlloc::new(lang);
+	let mut reg = RegAlloc::new(lang, no_reorder);
 
 	match lang {
 		Language::Js => {
@@ -434,9 +434,7 @@ pub fn vmout<const NRM1: usize>(
 			if debug {
 				println!();
 			}
-			print!(
-				"private static byte _hi(byte v){{return (byte)(v >> 4);}}private static byte _lo(byte v){{return (byte)(v & 15);}}private static byte _hilo(byte v,byte n){{return (byte)((v>>(4*n))&15);}}private static byte _c(byte hi,byte lo){{return (byte)((hi<<4)|lo);}}private static byte _lsb(byte v){{return (byte)(v&1);}}private static byte _s1(byte v){{return (byte)(v>>1);}}private static byte _rm(int v,byte o){{return M[v+o];}}private static byte _rmn(int v,byte o){{return _hilo(_rm(v,_s1(o)),_lsb(o));}}public static void _c(byte[]d){{"
-			);
+			print!("public static void _c(byte[]d){{");
 		}
 	}
 
@@ -453,7 +451,7 @@ pub fn vmout<const NRM1: usize>(
 				print!(",{ele}")
 			}
 			print!("){{");
-			splits += 1;
+			splits += 1
 		}
 
 		if matches!(lang, Language::Python) {
@@ -461,27 +459,15 @@ pub fn vmout<const NRM1: usize>(
 		}
 		match op {
 			Op::Select { mem, idx, to } => {
-				let v = if matches!(lang, Language::Java) {
-					format!(
-						"_rm({},{})",
-						vm.memory
-							.iter()
-							.find(|m| m.id == *mem)
-							.expect("memdata")
-							.cont_offset,
-						reg.used_index(*idx),
-					)
-				} else {
-					format!(
-						"M[{}+{}]",
-						vm.memory
-							.iter()
-							.find(|m| m.id == *mem)
-							.expect("memdata")
-							.cont_offset,
-						reg.used_index(*idx),
-					)
-				};
+				let v = format!(
+					"M[{}+{}]",
+					vm.memory
+						.iter()
+						.find(|m| m.id == *mem)
+						.expect("memdata")
+						.cont_offset,
+					reg.used_index(*idx),
+				);
 				print!("{}", reg.alloc(*to, v))
 			}
 			Op::SelectNibble { mem, idx, to } => {
@@ -501,21 +487,11 @@ pub fn vmout<const NRM1: usize>(
 				print!("{}", reg.alloc(*to, v))
 			}
 			Op::ConcatNimbles { high, low, to } => {
-				let v = if matches!(lang, Language::Java) {
-					format!("_c({},{})", reg.used(*high), reg.used(*low))
-				} else {
-					format!("({}<<4)|{}", reg.used(*high), reg.used(*low))
-				};
+				let v = format!("({}<<4)|{}", reg.used(*high), reg.used(*low));
 				print!("{}", reg.alloc(*to, v));
 			}
 			Op::Nibble { from, nib, to } => {
-				let v = if matches!(lang, Language::Java) {
-					if matches!(nib, HighLow::High) {
-						format!("_hi({})", reg.used(*from))
-					} else {
-						format!("_lo({})", reg.used(*from))
-					}
-				} else if matches!(nib, HighLow::High) {
+				let v = if matches!(nib, HighLow::High) {
 					format!("{}>>4", reg.used(*from))
 				} else {
 					format!("{}&15", reg.used(*from))
@@ -523,34 +499,26 @@ pub fn vmout<const NRM1: usize>(
 				print!("{}", reg.alloc(*to, v))
 			}
 			Op::NibbleDyn { from, nib, to } => {
-				let v = if matches!(lang, Language::Java) {
-					format!("_hilo({},{})", reg.used(*from), reg.used(*nib))
-				} else {
-					format!("({}>>(4*{}))&15", reg.used(*from), reg.used(*nib))
-				};
+				let v = format!("({}>>(4*{}))&15", reg.used(*from), reg.used(*nib));
 				print!("{}", reg.alloc(*to, v))
 			}
 			Op::Div2 { from, to } => {
-				let v = if matches!(lang, Language::Java) {
-					format!("_s1({})", reg.used(*from))
-				} else {
-					format!("{}>>1", reg.used(*from))
-				};
+				let v = format!("{}>>1", reg.used(*from));
 				print!("{}", reg.alloc(*to, v))
 			}
 			Op::Mod2 { from, to } => {
-				let v = if matches!(lang, Language::Java) {
-					format!("_lsb({})", reg.used(*from))
-				} else {
-					format!("{}&1", reg.used(*from))
-				};
+				let v = format!("{}&1", reg.used(*from));
 				print!("{}", reg.alloc(*to, v))
 			}
 			Op::LoadState { idx, to } => {
 				print!("{}", reg.alloc(*to, format!("d[{idx}]")));
 			}
 			Op::StoreState { from, to_idx } => {
-				print!("d[{to_idx}]={}", reg.used(*from))
+				if matches!(lang, Language::Java) {
+					print!("d[{to_idx}]=(byte) {}", reg.used(*from))
+				} else {
+					print!("d[{to_idx}]={}", reg.used(*from))
+				}
 			}
 		}
 		for ele in cleanup_after_insn
@@ -581,14 +549,16 @@ struct RegAlloc {
 	free_list: Vec<String>,
 	last_allocated: usize,
 	lang: Language,
+	no_reorder: bool,
 }
 impl RegAlloc {
-	fn new(lang: Language) -> Self {
+	fn new(lang: Language, no_reorder: bool) -> Self {
 		Self {
 			allocated: HashMap::new(),
 			free_list: vec![],
 			last_allocated: 0,
 			lang,
+			no_reorder,
 		}
 	}
 
@@ -601,7 +571,7 @@ impl RegAlloc {
 
 		for (_, v) in &self.allocated {
 			pass.push(v.clone());
-			params.push(format!("byte {v}"));
+			params.push(format!("int {v}"));
 		}
 
 		(pass, params)
@@ -618,7 +588,11 @@ impl RegAlloc {
 			self.allocated.insert(l, name.clone());
 			(true, name)
 		} else {
-			let i = rng().random_range(0..self.free_list.len());
+			let i = if self.no_reorder {
+				0
+			} else {
+				rng().random_range(0..self.free_list.len())
+			};
 			let i = self.free_list.remove(i);
 			self.allocated.insert(l, i.clone());
 			(false, i)
@@ -643,7 +617,7 @@ impl RegAlloc {
 			}
 			Language::Java => {
 				if new {
-					format!("byte {name}={v}")
+					format!("int {name}={v}")
 				} else {
 					format!("{name}={v}")
 				}
