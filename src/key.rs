@@ -39,11 +39,7 @@ macro_rules! impl_aes_key {
 			}
 
 			pub fn expand(self) -> RoundKeys<$nrm1> {
-				expand_nonstandard_keys(
-					&PrecomputedSBox::aes_standard(),
-					self,
-					Dual::STANDARD,
-				)
+				expand_nonstandard_keys(&PrecomputedSBox::aes_standard(), self, Dual::STANDARD)
 			}
 		}
 	};
