@@ -27,7 +27,7 @@ use crate::{RI, SPos, State, StateMap, Tables, X, XArr};
 pub struct Bijection8(XArr<X>);
 impl Bijection8 {
 	fn identity() -> Self {
-		Self(XArr(core::array::from_fn(|i| X(i as u8))))
+		Self(XArr::from_fn(|i| i))
 	}
 	/// map if inv == false, unmap if true
 	fn mapunmap(&self, v: X, inv: bool) -> X {

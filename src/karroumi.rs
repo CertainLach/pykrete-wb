@@ -246,7 +246,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 	) -> Self {
 		use crate::{add_round_key, add_shifted_round_key, sub_bytes};
 
-		let mut tboxes_arr: [Tbox; NRM1] = std::array::from_fn(|_| Tbox::default());
+		let mut tboxes = <RIArr<_, NRM1>>::from_fn(|_| Tbox::default());
 
 		let (a, b) = &round_keys.last;
 		let inv_sbox = PrecomputedSBox::inversed(&sboxes.get_round(RI(NRM1)));
@@ -258,12 +258,12 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			add_round_key(&mut state, a);
 			*xbox = state;
 		}
-		tboxes_arr[0] = Tbox(last_as_first);
+		tboxes[RI(0)] = Tbox(last_as_first);
 
 		for dec_idx in 1..NRM1 {
 			let enc_round = NRM1 - dec_idx;
 			let inv_sbox = PrecomputedSBox::inversed(&sboxes.get_round(RI(enc_round)));
-			for (x, xbox) in tboxes_arr[dec_idx].0.iter_mut() {
+			for (x, xbox) in tboxes[RI(dec_idx)].0.iter_mut() {
 				let mut state = State::from_x(x);
 				sub_bytes(&inv_sbox, &mut state);
 				add_round_key(&mut state, &round_keys.rounds[RI(enc_round)]);
@@ -279,14 +279,13 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			state
 		}));
 
-		Self::new(RIArr(tboxes_arr), Tbox(last))
+		Self::new(tboxes, Tbox(last))
 	}
 }
 
 impl<const NRM1: usize> WorkRounds<NRM1> {
 	pub fn new_karroumi_tyi(tboxes: &Tboxes<NRM1>, ty: &KarroumiTy<NRM1>) -> Self {
-		Self(RIArr(std::array::from_fn(|r| {
-			let r = RI(r);
+		Self(RIArr::from_fn(|r| {
 			Work(StateMap::from_fn(|pos| {
 				XArr::from_fn(|x| {
 					let i = pos.row();
@@ -294,7 +293,7 @@ impl<const NRM1: usize> WorkRounds<NRM1> {
 					ty.get(r).get_row(tboxv, i)
 				})
 			}))
-		})))
+		}))
 	}
 }
 
@@ -345,9 +344,7 @@ impl<const NRM1: usize> Tables<NRM1> {
 
 			tboxes_last.apply_delta_inv(r0_q.delta(standard_q));
 		} else {
-			{
-				tyboxes.0[RI(0)].apply_delta(standard_q.delta(r0_q));
-			}
+			tyboxes.0[RI(0)].apply_delta(standard_q.delta(r0_q));
 
 			for r in 1..NRM1 {
 				tyboxes.0[RI(r)].apply_delta(config.rounds[RI(r - 1)].delta(config.rounds[RI(r)]));
@@ -530,8 +527,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 	) -> Self {
 		use crate::{add_round_key, add_shifted_round_key};
 
-		let tboxes = RIArr(std::array::from_fn(|r| {
-			let r = RI(r);
+		let tboxes = RIArr::from_fn(|r| {
 			let mut rtbox = Tbox::default();
 
 			let mut transformed_rk = round_keys.rounds[r];
@@ -551,7 +547,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 				*xbox = state;
 			}
 			rtbox
-		}));
+		});
 
 		let (a, b) = &round_keys.last;
 		let mut transformed_a = *a;
@@ -566,7 +562,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			transformed_b.0[pos.0] = q.apply(b.0[pos.0]);
 		}
 
-		let last: XArr<State> = XArr(X::ALL.map(|x| {
+		let last = Tbox(XArr::from_fn(|x| {
 			let mut state = State::from_x(x);
 			add_shifted_round_key(&mut state, &transformed_a, &SHIFT_ROWS_TAB);
 			for pos in SPos::all() {
@@ -577,7 +573,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			state
 		}));
 
-		Self::new(tboxes, Tbox(last))
+		Self::new(tboxes, last)
 	}
 
 	fn from_karroumi4_round_keys_inv(
@@ -587,7 +583,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 	) -> Self {
 		use crate::{add_round_key, add_shifted_round_key};
 
-		let mut tboxes_arr = <RIArr<_, NRM1>>::from_fn(|_| Tbox::default());
+		let mut tboxes = <RIArr<_, NRM1>>::from_fn(|_| Tbox::default());
 
 		let (a, b) = &round_keys.last;
 
@@ -614,7 +610,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			add_round_key(&mut state, &transformed_a);
 			*xbox = state;
 		}
-		tboxes_arr[RI(0)] = Tbox(last_as_first);
+		tboxes[RI(0)] = Tbox(last_as_first);
 
 		for dec_idx in 1..NRM1 {
 			let enc_round = NRM1 - dec_idx;
@@ -626,7 +622,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 				transformed_rk.0[pos.0] = q.apply(round_keys.rounds[RI(enc_round)].0[pos.0]);
 			}
 
-			for (x, xbox) in tboxes_arr[RI(dec_idx)].0.iter_mut() {
+			for (x, xbox) in tboxes[RI(dec_idx)].0.iter_mut() {
 				let mut state = State::from_x(x);
 				for pos in SPos::all() {
 					let inv_sbox =
@@ -655,7 +651,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			state
 		}));
 
-		Self::new(tboxes_arr, last)
+		Self::new(tboxes, last)
 	}
 }
 
@@ -723,18 +719,16 @@ impl<const NRM1: usize> Tables<NRM1> {
 			tyboxes.0[RI(0)].apply_delta4(standard_configs.delta(config.rounds[RI(0)], shift_rows));
 
 			for r in 1..NRM1 {
-				tyboxes.0[RI(r)].apply_delta4(
-					config.rounds[RI(r - 1)].delta(config.rounds[RI(r)], &SHIFT_ROWS_TAB),
-				);
+				tyboxes.0[RI(r)]
+					.apply_delta4(config.rounds[RI(r - 1)].delta(config.rounds[RI(r)], shift_rows));
 			}
 
-			tboxes_last
-				.apply_delta4(config.rounds[RI(NRM1 - 1)].delta(config.last, &SHIFT_ROWS_TAB));
+			tboxes_last.apply_delta4(config.rounds[RI(NRM1 - 1)].delta(config.last, shift_rows));
 
 			tboxes_last.apply_delta4_inv(config.last.delta_inv(base));
 		}
 
-		Self::new_base(WorkRounds(tyboxes.0), tboxes_last, inv)
+		Self::new_base(tyboxes, tboxes_last, inv)
 	}
 }
 
