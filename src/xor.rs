@@ -19,11 +19,11 @@ use rand::Rng;
 use rand::distr::StandardUniform;
 use rand::prelude::*;
 
+use crate::ColumnMap;
 use crate::HighLow;
 use crate::HighLowMap;
 use crate::Purpose;
 use crate::PurposeMap;
-use crate::ColumnMap;
 use crate::SColumn;
 use crate::SPos;
 use crate::{NibbleMap, RI, RIArr, U4};

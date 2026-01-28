@@ -20,7 +20,7 @@ use rand::{Rng, rng};
 
 use crate::consts::{INV_SHIFT_ROWS_TAB, SHIFT_ROWS_TAB};
 use crate::{
-	HighLow, Purpose, PurposeMap, RI, ColumnMap, SRow, SPos, SColumn, StateMap, Step, Tables, X,
+	ColumnMap, HighLow, Purpose, PurposeMap, RI, SColumn, SPos, SRow, StateMap, Step, Tables, X,
 };
 
 #[derive(Clone, Copy)]
@@ -450,7 +450,7 @@ pub fn vmout<const NRM1: usize>(
 
 	let mut splits = 0;
 	for (insn, op) in vm.ops.iter().enumerate() {
-		if matches!(lang, Language::Java) && insn % 500 == 0 && insn != 0 {
+		if matches!(lang, Language::Java) && insn.is_multiple_of(500) && insn != 0 {
 			let (pass, params) = reg.split_function();
 			print!("_c{splits}(d");
 			for ele in pass {
@@ -577,7 +577,7 @@ impl RegAlloc {
 
 		self.free_list = vec![];
 
-		for (_, v) in &self.allocated {
+		for v in self.allocated.values() {
 			pass.push(v.clone());
 			params.push(format!("int {v}"));
 		}

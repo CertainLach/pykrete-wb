@@ -15,7 +15,7 @@
 
 use crate::tbox::Tboxes;
 use crate::ty::Ty;
-use crate::{Row, RIArr, SColumn, StateMap, XArr};
+use crate::{RIArr, Row, SColumn, StateMap, XArr};
 
 #[derive(Default, Clone, Copy, Debug)]
 pub struct Work(pub(crate) StateMap<XArr<Row>>);

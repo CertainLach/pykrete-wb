@@ -18,7 +18,9 @@ use std::fs::File;
 use clap::{Parser, ValueEnum};
 use pykrete_wb::dual::{Dual, IRREDUCIBLE_POLYNOMIALS};
 use pykrete_wb::encoding::ExternalEncoding;
-use pykrete_wb::karroumi::{Dual4, KarroumiConfig, KarroumiConfig4};
+use pykrete_wb::karroumi::{
+	Dual4, KarroumiConfig, KarroumiConfig4, PrecomputedSBoxes, PrecomputedSBoxes4,
+};
 use pykrete_wb::key::{Aes128Key, Aes192Key, Aes256Key, RoundKeys};
 use pykrete_wb::sbox::PrecomputedSBox;
 use pykrete_wb::vm::{self, vmout};
@@ -183,10 +185,6 @@ macro_rules! match_aes_ty {
 	};
 }
 
-fn make_sbox(config: Dual) -> PrecomputedSBox {
-	PrecomputedSBox::for_dual(config)
-}
-
 fn main() -> anyhow::Result<()> {
 	let opts = Opts::parse();
 	let mut rng = rng();
@@ -229,8 +227,9 @@ fn main() -> anyhow::Result<()> {
 				let mut tables = match karroumi {
 					Some(Karroumi::PerRound) => {
 						let config = KarroumiConfig::random(&mut rng);
+						let sboxes = PrecomputedSBoxes::precompute(&config);
 						AesTables::from_karroumi_round_keys(
-							&make_sbox,
+							&sboxes,
 							&round_keys,
 							inv,
 							dual,
@@ -239,8 +238,9 @@ fn main() -> anyhow::Result<()> {
 					}
 					Some(Karroumi::PerRow) => {
 						let config = KarroumiConfig4::random(&mut rng);
+						let sboxes = PrecomputedSBoxes4::precompute(&config);
 						AesTables::from_karroumi4_round_keys(
-							&make_sbox,
+							&sboxes,
 							&round_keys,
 							inv,
 							// TODO: Allow a per-row dual to be specified in cmd?

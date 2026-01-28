@@ -68,6 +68,7 @@ impl GF2 {
 	}
 }
 
+#[allow(clippy::suspicious_arithmetic_impl, reason = "gf2 math")]
 impl std::ops::Add for GF2 {
 	type Output = Self;
 	#[inline]
@@ -76,6 +77,7 @@ impl std::ops::Add for GF2 {
 	}
 }
 
+#[allow(clippy::suspicious_op_assign_impl, reason = "gf2 math")]
 impl std::ops::AddAssign for GF2 {
 	#[inline]
 	fn add_assign(&mut self, rhs: Self) {
@@ -83,6 +85,7 @@ impl std::ops::AddAssign for GF2 {
 	}
 }
 
+#[allow(clippy::suspicious_arithmetic_impl, reason = "gf2 math")]
 impl std::ops::Mul for GF2 {
 	type Output = Self;
 	#[inline]
@@ -119,9 +122,9 @@ impl MatGF2<8> {
 
 	pub fn from_column_bytes(cols: [u8; 8]) -> Self {
 		let mut m = Self::new();
-		for col in 0..8 {
+		for (coli, colv) in cols.iter().enumerate() {
 			for row in 0..8 {
-				m.set(7 - row, 7 - col, GF2((cols[col] >> row) & 1 == 1));
+				m.set(7 - row, 7 - coli, GF2((colv >> row) & 1 == 1));
 			}
 		}
 		m
@@ -153,7 +156,7 @@ impl MatGF2<8> {
 			for j in 0..8 {
 				let mut sum = GF2::ZERO;
 				for k in 0..8 {
-					sum = sum + self.get(i, k) * other.get(k, j);
+					sum += self.get(i, k) * other.get(k, j);
 				}
 				result.set(i, j, sum);
 			}
@@ -365,6 +368,12 @@ impl<const N: usize> fmt::Display for MatGF2<N> {
 #[derive(Clone)]
 pub struct VecGF2<const N: usize> {
 	pub data: [GF2; N],
+}
+
+impl<const N: usize> Default for VecGF2<N> {
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 impl<const N: usize> VecGF2<N> {

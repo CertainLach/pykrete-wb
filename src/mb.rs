@@ -16,7 +16,7 @@
 use rand::Rng;
 
 use crate::{
-	Row, RowMap, ColumnMap, SRow, SPos, SColumn, X, XArr, mat::MatGF2, tbox::Tbox, tybox::Work,
+	ColumnMap, Row, RowMap, SColumn, SPos, SRow, X, XArr, mat::MatGF2, tbox::Tbox, tybox::Work,
 	xor::ShiftRowsBijection,
 };
 

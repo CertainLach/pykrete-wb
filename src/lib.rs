@@ -379,7 +379,8 @@ impl<const NRM1: usize> Tables<NRM1> {
 							xor.map(Purpose::Output, v, n, a, b)
 						};
 
-						let n0123 = |v: SColumn| X::nibs(n01(v, HighLow::High), n01(v, HighLow::Low));
+						let n0123 =
+							|v: SColumn| X::nibs(n01(v, HighLow::High), n01(v, HighLow::Low));
 
 						data.set_column(col, Column(SColumn::ALL.map(n0123)));
 					} else {
