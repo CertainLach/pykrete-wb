@@ -1,0 +1,11 @@
+[package]
+name = "pykrete-mkvm"
+version = "0.1.0"
+edition = "2024"
+description = "Whitebox AES implementation: VM code-generator"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.41", features = ["derive"] }
+rand = "0.9.2"
+pykrete-wb = { version = "0.1.0", path = "../.." }

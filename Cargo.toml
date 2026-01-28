@@ -1,0 +1,33 @@
+[package]
+name = "pykrete-wb"
+version = "0.1.0"
+edition = "2024"
+description = "Whitebox AES implementation"
+
+[dependencies]
+num-integer = "0.1.46"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+rand = { version = "0.9.1", optional = true }
+rayon = "1.11.0"
+stacker = "0.1.21"
+syn = "2.0.104"
+test-case = "3.3.1"
+tracing = { version = "0.1.41", optional = true }
+zeroize = { version = "1.8.1", features = ["derive"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+test-log = { version = "0.2.17", features = ["trace"] }
+
+[features]
+default = ["generation"]
+# Generation of tables
+generation = ["rand", "tracing"]
+
+[workspace]
+members = ["cmds/*"]
+
+[workspace.package]
+edition = "2024"
+license = "AGPL"
