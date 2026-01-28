@@ -120,8 +120,10 @@ impl VM {
 		self.ops.push(Op::NibbleDyn { from, nib, to });
 		to
 	}
-	fn finalize_memory(&mut self) {
-		self.memory.shuffle(&mut rng());
+	fn finalize_memory(&mut self, no_reorder: bool) {
+		if !no_reorder {
+			self.memory.shuffle(&mut rng());
+		}
 		let mut off = 0;
 		for ele in self.memory.iter_mut() {
 			ele.cont_offset = off;
@@ -237,7 +239,12 @@ struct LocalData {
 	last_used_at: usize,
 }
 
-pub fn vmout<const NRM1: usize>(tables: &Tables<NRM1>, lang: Language, debug: bool) {
+pub fn vmout<const NRM1: usize>(
+	tables: &Tables<NRM1>,
+	lang: Language,
+	debug: bool,
+	no_reorder: bool,
+) {
 	let mut vm = VM::default();
 	if matches!(lang, Language::Java) {
 		vm.use_select_nibble = true;
@@ -325,7 +332,7 @@ pub fn vmout<const NRM1: usize>(tables: &Tables<NRM1>, lang: Language, debug: bo
 		vm.store_state(*l, i);
 	}
 
-	vm.finalize_memory();
+	vm.finalize_memory(no_reorder);
 
 	let mut opsout = vec![];
 	let mut pending = vm
@@ -334,7 +341,9 @@ pub fn vmout<const NRM1: usize>(tables: &Tables<NRM1>, lang: Language, debug: bo
 		.map(|v| v.into_data())
 		.collect::<Vec<_>>();
 	let mut provided = HashSet::new();
-	pending.shuffle(&mut rng());
+	if !no_reorder {
+		pending.shuffle(&mut rng());
+	}
 	while !pending.is_empty() {
 		let mut new_pending = vec![];
 		let mut added = 0;
@@ -431,7 +440,22 @@ pub fn vmout<const NRM1: usize>(tables: &Tables<NRM1>, lang: Language, debug: bo
 		}
 	}
 
+	let mut splits = 0;
 	for (insn, op) in vm.ops.iter().enumerate() {
+		if matches!(lang, Language::Java) && insn % 500 == 0 && insn != 0 {
+			let (pass, params) = reg.split_function();
+			print!("_c{splits}(d");
+			for ele in pass {
+				print!(",{ele}")
+			}
+			print!(");}}private static void _c{splits}(byte[]d");
+			for ele in params {
+				print!(",{ele}")
+			}
+			print!("){{");
+			splits += 1;
+		}
+
 		if matches!(lang, Language::Python) {
 			print!("\t");
 		}
@@ -567,6 +591,22 @@ impl RegAlloc {
 			lang,
 		}
 	}
+
+	fn split_function(&mut self) -> (Vec<String>, Vec<String>) {
+		assert!(matches!(self.lang, Language::Java));
+		let mut pass = vec![];
+		let mut params = vec![];
+
+		self.free_list = vec![];
+
+		for (_, v) in &self.allocated {
+			pass.push(v.clone());
+			params.push(format!("byte {v}"));
+		}
+
+		(pass, params)
+	}
+
 	fn alloc_name(&mut self, l: Local) -> (bool, String) {
 		if self.allocated.contains_key(&l) {
 			panic!("local is already allocated");
