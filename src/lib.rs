@@ -158,7 +158,7 @@ impl<const NRM1: usize> Tables<NRM1> {
 							(&mut mbl.0[r], &mut xor_mbl, &ShiftRowsBijection::IDENTITY)
 						}
 					};
-					let tyi_output_coding: ColumnMap<XorEncodingSingle> = rng.random();
+					let tyi_output_coding: RowMap<XorEncodingSingle> = rng.random();
 
 					work.encode(
 						&prev_round_input_encoding,
@@ -342,7 +342,7 @@ impl<const NRM1: usize> Tables<NRM1> {
 			);
 
 			// tbox + ty(i)
-			for row in SRow::all() {
+			for col in SColumn::all() {
 				for step in Step::ALL {
 					if matches!(step, Step::Mbl) && !self.uses_mbl {
 						continue;
@@ -351,8 +351,8 @@ impl<const NRM1: usize> Tables<NRM1> {
 						Step::Tybox => &self.tyboxes.0[r],
 						Step::Mbl => &self.mbl.0[r],
 					};
-					let [aa, bb, cc, dd] = SColumn::ALL.map(|column| {
-						let pos = SPos::row_column(row, column);
+					let [aa, bb, cc, dd] = SRow::ALL.map(|row| {
+						let pos = SPos::column_row(col, row);
 						work.0[pos][data[pos]]
 					});
 					let xor = match step {
@@ -361,33 +361,33 @@ impl<const NRM1: usize> Tables<NRM1> {
 						_ => None,
 					};
 					if let Some(xor) = xor {
-						let xor = xor.partial_map(r, row);
+						let xor = xor.partial_map(r, col);
 
-						let n01 = |v: SRow, n: HighLow| {
+						let n01 = |v: SColumn, n: HighLow| {
 							let a = xor.map(
 								Purpose::High,
 								v,
 								n,
-								aa.row_nibble(v, n),
-								bb.row_nibble(v, n),
+								aa.column_nibble(v, n),
+								bb.column_nibble(v, n),
 							);
 							let b = xor.map(
 								Purpose::Low,
 								v,
 								n,
-								cc.row_nibble(v, n),
-								dd.row_nibble(v, n),
+								cc.column_nibble(v, n),
+								dd.column_nibble(v, n),
 							);
 
 							xor.map(Purpose::Output, v, n, a, b)
 						};
 
-						let n0123 = |v: SRow| X::nibs(n01(v, HighLow::High), n01(v, HighLow::Low));
+						let n0123 = |v: SColumn| X::nibs(n01(v, HighLow::High), n01(v, HighLow::Low));
 
-						data.set_row(row, Row(SRow::ALL.map(n0123)));
+						data.set_column(col, Column(SColumn::ALL.map(n0123)));
 					} else {
-						let n0123 = |v: SRow| aa[v] ^ bb[v] ^ cc[v] ^ dd[v];
-						data.set_row(row, Row(SRow::ALL.map(n0123)));
+						let n0123 = |v: SColumn| aa[v] ^ bb[v] ^ cc[v] ^ dd[v];
+						data.set_column(col, Column(SColumn::ALL.map(n0123)));
 					}
 				}
 			}
@@ -422,13 +422,13 @@ impl State {
 		Self(StateMap([x; 16]))
 	}
 
-	fn set_row(&mut self, r: SRow, v: Row) {
-		for column in SColumn::all() {
-			self[SPos::row_column(r, column)] = v[column];
+	fn set_column(&mut self, r: SColumn, v: Column) {
+		for row in SRow::all() {
+			self[SPos::column_row(r, row)] = v[row];
 		}
 	}
-	fn get_row(&self, r: SRow) -> Row {
-		Row(SColumn::ALL.map(|c| self[SPos::row_column(r, c)]))
+	fn get_column(&self, r: SColumn) -> Column {
+		Column(SRow::ALL.map(|c| self[SPos::column_row(r, c)]))
 	}
 }
 impl Index<SPos> for State {
@@ -468,8 +468,8 @@ macro_rules! u2_newtype {
 	};
 }
 
-u2_newtype!(SRow);
 u2_newtype!(SColumn);
+u2_newtype!(SRow);
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct SPos(U4);
@@ -492,17 +492,17 @@ impl SPos {
 		Self(U4::_14),
 		Self(U4::_15),
 	];
-	fn row_column(row: SRow, column: SColumn) -> Self {
-		Self(U4::ji(row.0, column.0))
+	fn column_row(column: SColumn, row: SRow) -> Self {
+		Self(U4::ji(column.0, row.0))
 	}
 	fn all() -> impl Iterator<Item = Self> {
 		U4::all().map(Self)
 	}
-	fn column(&self) -> SColumn {
-		SColumn(self.0.i())
-	}
 	fn row(&self) -> SRow {
-		SRow(self.0.j())
+		SRow(self.0.i())
+	}
+	fn column(&self) -> SColumn {
+		SColumn(self.0.j())
 	}
 	fn as_index(&self) -> usize {
 		self.0.as_index()
@@ -662,12 +662,12 @@ fn gf_mul(a: X, b: u8, poly: dual::Poly) -> X {
 }
 
 pub fn mix_columns(state: &mut State, coeffs: &dual::MixColCoeffs, poly: dual::Poly) {
-	for row in SRow::all() {
-		let Row([a, b, c, d]) = state.get_row(row);
+	for column in SColumn::all() {
+		let Column([a, b, c, d]) = state.get_column(column);
 
-		state.set_row(
-			row,
-			Row([
+		state.set_column(
+			column,
+			Column([
 				gf_mul(a, coeffs.c2, poly) ^ gf_mul(b, coeffs.c3, poly) ^ c ^ d,
 				a ^ gf_mul(b, coeffs.c2, poly) ^ gf_mul(c, coeffs.c3, poly) ^ d,
 				a ^ b ^ gf_mul(c, coeffs.c2, poly) ^ gf_mul(d, coeffs.c3, poly),
@@ -678,12 +678,12 @@ pub fn mix_columns(state: &mut State, coeffs: &dual::MixColCoeffs, poly: dual::P
 }
 
 pub fn mix_columns_inv(state: &mut State, coeffs: &dual::MixColCoeffs, poly: dual::Poly) {
-	for row in SRow::all() {
-		let Row([a, b, c, d]) = state.get_row(row);
+	for column in SColumn::all() {
+		let Column([a, b, c, d]) = state.get_column(column);
 
-		state.set_row(
-			row,
-			Row([
+		state.set_column(
+			column,
+			Column([
 				gf_mul(a, coeffs.c14, poly)
 					^ gf_mul(b, coeffs.c11, poly)
 					^ gf_mul(c, coeffs.c13, poly)
@@ -861,8 +861,8 @@ macro_rules! fixed_map {
 fixed_map!(NibbleMap(16 as U4));
 fixed_map!(StateMap(16 as SPos));
 fixed_map!(DibitMap(4 as U2));
-fixed_map!(ColumnMap(4 as SColumn));
 fixed_map!(RowMap(4 as SRow));
+fixed_map!(ColumnMap(4 as SColumn));
 fixed_map!(XArr(256 as X));
 fixed_map!(PurposeMap(3 as Purpose));
 fixed_map!(HighLowMap(2 as HighLow));
@@ -986,12 +986,12 @@ where
 	}
 }
 
-fixed_map!(Column<X>(4 as SRow));
 fixed_map!(Row<X>(4 as SColumn));
+fixed_map!(Column<X>(4 as SRow));
 
-impl fmt::Debug for Column {
+impl fmt::Debug for Row {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "Column(")?;
+		write!(f, "Row(")?;
 		for v in self.0 {
 			write!(f, "{:0>2x}", v.0)?;
 		}
@@ -999,23 +999,23 @@ impl fmt::Debug for Column {
 	}
 }
 
-impl Column {
-	fn row_nibble(&self, row: SRow, high_low: HighLow) -> U4 {
-		let v = self[row];
+impl Row {
+	fn column_nibble(&self, column: SColumn, high_low: HighLow) -> U4 {
+		let v = self[column];
 		let (high, low) = v.as_nibs();
 		match high_low {
 			HighLow::High => high,
 			HighLow::Low => low,
 		}
 	}
-	fn set_row_nibble(&mut self, row: SRow, high_low: HighLow, to: U4) {
-		let v = self[row];
+	fn set_column_nibble(&mut self, column: SColumn, high_low: HighLow, to: U4) {
+		let v = self[column];
 		let (mut high, mut low) = v.as_nibs();
 		match high_low {
 			HighLow::High => high = to,
 			HighLow::Low => low = to,
 		};
-		self[row] = X::nibs(high, low)
+		self[column] = X::nibs(high, low)
 	}
 	fn as_bytes(&self) -> [u8; 4] {
 		[self.0[0].0, self.0[1].0, self.0[2].0, self.0[3].0]
@@ -1024,7 +1024,7 @@ impl Column {
 		Self([X(v[0]), X(v[1]), X(v[2]), X(v[3])])
 	}
 }
-impl Row {
+impl Column {
 	fn as_bytes(&self) -> [u8; 4] {
 		[self.0[0].0, self.0[1].0, self.0[2].0, self.0[3].0]
 	}

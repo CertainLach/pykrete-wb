@@ -162,18 +162,18 @@ impl MatGF2<8> {
 	}
 }
 impl MatGF2<32> {
-	pub fn apply_row(&self, v: Row) -> Row {
-		Row::from_bytes(vec2int(*self * int2vec(u32::from_be_bytes(v.as_bytes()))).to_be_bytes())
+	pub fn apply_row(&self, v: Column) -> Column {
+		Column::from_bytes(vec2int(*self * int2vec(u32::from_be_bytes(v.as_bytes()))).to_be_bytes())
 	}
-	pub fn apply_inverse_row(&self, v: Row) -> Row {
+	pub fn apply_inverse_row(&self, v: Column) -> Column {
 		self.inverse()
 			.expect("inversible matrix expected")
 			.apply_row(v)
 	}
-	pub fn apply_column(&self, v: Column) -> Column {
-		Column::from_bytes(vec2int(*self * int2vec(u32::from_be_bytes(v.as_bytes()))).to_be_bytes())
+	pub fn apply_column(&self, v: Row) -> Row {
+		Row::from_bytes(vec2int(*self * int2vec(u32::from_be_bytes(v.as_bytes()))).to_be_bytes())
 	}
-	pub fn apply_inverse_column(&self, v: Column) -> Column {
+	pub fn apply_inverse_column(&self, v: Row) -> Row {
 		self.inverse()
 			.expect("inversible matrix expected")
 			.apply_column(v)

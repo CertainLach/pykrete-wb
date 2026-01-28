@@ -23,9 +23,9 @@ use crate::HighLow;
 use crate::HighLowMap;
 use crate::Purpose;
 use crate::PurposeMap;
-use crate::RowMap;
+use crate::ColumnMap;
+use crate::SColumn;
 use crate::SPos;
-use crate::SRow;
 use crate::{NibbleMap, RI, RIArr, U4};
 
 #[derive(Clone, Copy)]
@@ -111,20 +111,27 @@ impl Default for Bijection4 {
 	}
 }
 
-pub struct XorPartial<'t>(&'t PurposeMap<RowMap<HighLowMap<NibbleMap<Bijection4>>>>);
+pub struct XorPartial<'t>(&'t PurposeMap<ColumnMap<HighLowMap<NibbleMap<Bijection4>>>>);
 impl<'t> XorPartial<'t> {
-	pub(crate) fn map(&self, purpose: Purpose, row: SRow, high_low: HighLow, a: U4, b: U4) -> U4 {
-		self.0[purpose][row][high_low][a].map(b)
+	pub(crate) fn map(
+		&self,
+		purpose: Purpose,
+		column: SColumn,
+		high_low: HighLow,
+		a: U4,
+		b: U4,
+	) -> U4 {
+		self.0[purpose][column][high_low][a].map(b)
 	}
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct XorRound(pub(crate) RowMap<PurposeMap<RowMap<HighLowMap<NibbleMap<Bijection4>>>>>);
+pub struct XorRound(pub(crate) ColumnMap<PurposeMap<ColumnMap<HighLowMap<NibbleMap<Bijection4>>>>>);
 impl XorRound {
 	fn identity() -> Self {
 		let nib = NibbleMap::from_fn(Bijection4::xor_identity);
-		Self(RowMap::from_fn(|_| {
-			PurposeMap::from_fn(|_| RowMap::from_fn(|_| HighLowMap::from_fn(|_| nib)))
+		Self(ColumnMap::from_fn(|_| {
+			PurposeMap::from_fn(|_| ColumnMap::from_fn(|_| HighLowMap::from_fn(|_| nib)))
 		}))
 	}
 }
@@ -133,7 +140,7 @@ impl XorRound {
 pub struct Xor<const NRM1: usize>(pub RIArr<XorRound, NRM1>);
 
 impl<const NRM1: usize> Xor<NRM1> {
-	pub(crate) fn partial_map(&self, r: RI, j: SRow) -> XorPartial<'_> {
+	pub(crate) fn partial_map(&self, r: RI, j: SColumn) -> XorPartial<'_> {
 		XorPartial(&self.0[r].0[j])
 	}
 

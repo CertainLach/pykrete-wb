@@ -16,15 +16,15 @@
 use rand::Rng;
 
 use crate::{
-	Column, ColumnMap, RowMap, SColumn, SPos, SRow, X, XArr, mat::MatGF2, tbox::Tbox, tybox::Work,
+	Row, RowMap, ColumnMap, SRow, SPos, SColumn, X, XArr, mat::MatGF2, tbox::Tbox, tybox::Work,
 	xor::ShiftRowsBijection,
 };
 
-pub struct L(RowMap<ColumnMap<MatGF2<8>>>);
+pub struct L(ColumnMap<RowMap<MatGF2<8>>>);
 impl L {
 	pub fn random<R: Rng>(rng: &mut R) -> Self {
-		Self(RowMap::from_fn(|_| {
-			ColumnMap::from_fn(|_| MatGF2::random_invertible(rng))
+		Self(ColumnMap::from_fn(|_| {
+			RowMap::from_fn(|_| MatGF2::random_invertible(rng))
 		}))
 	}
 }
@@ -36,7 +36,7 @@ impl Work {
 			for x in X::all() {
 				let lv = {
 					let pos = shift_rows.map(pos);
-					l.0[pos.row()][pos.column()]
+					l.0[pos.column()][pos.row()]
 				};
 				let idx = X(lv.apply_inverse(x.0));
 				let v = old_tyboxes[idx];
@@ -45,15 +45,15 @@ impl Work {
 		}
 	}
 	pub fn apply_l(&mut self, l: &L) {
-		for row in SRow::all() {
+		for row in SColumn::all() {
 			for x in X::all() {
-				let comp_elem = |out: Column| {
+				let comp_elem = |out: Row| {
 					let concat = MatGF2::<32>::concat(l.0[row].0);
 					concat.apply_column(out)
 				};
 
-				for column in SColumn::ALL {
-					let pos = SPos::row_column(row, column);
+				for column in SRow::ALL {
+					let pos = SPos::column_row(row, column);
 					self.0[pos][x] = comp_elem(self.0[pos][x]);
 				}
 			}
@@ -68,7 +68,7 @@ impl Tbox {
 			for x in X::all() {
 				let idx = {
 					let pos = shift_rows.map(pos);
-					X(l.0[pos.row()][pos.column()].apply_inverse(x.0))
+					X(l.0[pos.column()][pos.row()].apply_inverse(x.0))
 				};
 				self.0[x][pos] = old_tboxes_last[idx];
 			}
@@ -76,17 +76,17 @@ impl Tbox {
 	}
 }
 
-pub struct MB(pub RowMap<MatGF2<32>>);
+pub struct MB(pub ColumnMap<MatGF2<32>>);
 impl MB {
 	pub fn random<R: Rng>(rng: &mut R) -> Self {
-		Self(RowMap::from_fn(|_| <MatGF2<32>>::random_invertible(rng)))
+		Self(ColumnMap::from_fn(|_| <MatGF2<32>>::random_invertible(rng)))
 	}
 }
 
 impl Work {
 	pub fn apply_mb(&mut self, mb: &MB) {
 		for (ij, xbox) in self.0.iter_mut() {
-			let mat = &mb.0[ij.row()];
+			let mat = &mb.0[ij.column()];
 			for (_, col) in xbox.iter_mut() {
 				*col = mat.apply_column(*col)
 			}
@@ -94,7 +94,7 @@ impl Work {
 	}
 	pub fn apply_mb_inv(&mut self, mb: &MB) {
 		for (ij, xbox) in self.0.iter_mut() {
-			let mat = &mb.0[ij.row()];
+			let mat = &mb.0[ij.column()];
 			for (_, col) in xbox.iter_mut() {
 				*col = mat.apply_inverse_column(*col)
 			}

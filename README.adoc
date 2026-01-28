@@ -161,12 +161,6 @@ Options:
           [default: 0]
 ----
 
-== Implementation details
-
-Some things here are transposed compared to standard AES implementation, this transposition is performed because of the
-poorly drawn designs in my research notes, lol. I would like to rename everything properly, but then the code won't
-align with my drawings, and I'm only be able to reason about the code using them.
-
 == Performance
 
 Similar to other whitebox aes implementations during runtime, but the compiler is very slow.

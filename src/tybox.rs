@@ -15,10 +15,10 @@
 
 use crate::tbox::Tboxes;
 use crate::ty::Ty;
-use crate::{Column, RIArr, SRow, StateMap, XArr};
+use crate::{Row, RIArr, SColumn, StateMap, XArr};
 
 #[derive(Default, Clone, Copy, Debug)]
-pub struct Work(pub(crate) StateMap<XArr<Column>>);
+pub struct Work(pub(crate) StateMap<XArr<Row>>);
 
 #[derive(Debug)]
 pub struct WorkRounds<const NRM1: usize>(pub(crate) RIArr<Work, NRM1>);
@@ -27,9 +27,9 @@ impl<const NRM1: usize> WorkRounds<NRM1> {
 		Self(RIArr::from_fn(|r| {
 			Work(StateMap::from_fn(|pos| {
 				XArr::from_fn(|x| {
-					let i = pos.column();
+					let i = pos.row();
 					let tboxv = tboxes.get(r, x, pos);
-					ty.get_column(tboxv, i)
+					ty.get_row(tboxv, i)
 				})
 			}))
 		}))
@@ -37,8 +37,8 @@ impl<const NRM1: usize> WorkRounds<NRM1> {
 	pub fn new_mbl() -> Self {
 		let round = Work(StateMap::from_fn(|pos| {
 			XArr::from_fn(|x| {
-				let mut mblv = Column::default();
-				mblv[SRow(pos.column().0)] = x;
+				let mut mblv = Row::default();
+				mblv[SColumn(pos.row().0)] = x;
 				mblv
 			})
 		}));

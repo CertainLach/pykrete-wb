@@ -15,9 +15,9 @@
 
 use crate::consts::gf_mul_pol_slow;
 use crate::dual::{Dual, MixColCoeffs, Poly};
-use crate::{Column, ColumnMap, SColumn, X, XArr};
+use crate::{Row, RowMap, SRow, X, XArr};
 
-pub struct Ty(ColumnMap<XArr<ColumnMap<X>>>);
+pub struct Ty(RowMap<XArr<RowMap<X>>>);
 impl Ty {
 	pub fn new(inv: bool, config: Dual) -> Self {
 		let coeffs = MixColCoeffs::for_dual(config);
@@ -35,66 +35,66 @@ impl Ty {
 	}
 
 	fn new_forward(coeffs: &MixColCoeffs, poly: Poly) -> Self {
-		let mut out: ColumnMap<XArr<ColumnMap<X>>> = Default::default();
+		let mut out: RowMap<XArr<RowMap<X>>> = Default::default();
 		for x in X::all() {
 			let m2 = Self::gf_mul(x, coeffs.c2, poly);
 			let m3 = Self::gf_mul(x, coeffs.c3, poly);
 
-			out[SColumn::_0][x][SColumn::_0] = m2;
-			out[SColumn::_1][x][SColumn::_0] = m3;
-			out[SColumn::_2][x][SColumn::_0] = x;
-			out[SColumn::_3][x][SColumn::_0] = x;
+			out[SRow::_0][x][SRow::_0] = m2;
+			out[SRow::_1][x][SRow::_0] = m3;
+			out[SRow::_2][x][SRow::_0] = x;
+			out[SRow::_3][x][SRow::_0] = x;
 
-			out[SColumn::_0][x][SColumn::_1] = x;
-			out[SColumn::_1][x][SColumn::_1] = m2;
-			out[SColumn::_2][x][SColumn::_1] = m3;
-			out[SColumn::_3][x][SColumn::_1] = x;
+			out[SRow::_0][x][SRow::_1] = x;
+			out[SRow::_1][x][SRow::_1] = m2;
+			out[SRow::_2][x][SRow::_1] = m3;
+			out[SRow::_3][x][SRow::_1] = x;
 
-			out[SColumn::_0][x][SColumn::_2] = x;
-			out[SColumn::_1][x][SColumn::_2] = x;
-			out[SColumn::_2][x][SColumn::_2] = m2;
-			out[SColumn::_3][x][SColumn::_2] = m3;
+			out[SRow::_0][x][SRow::_2] = x;
+			out[SRow::_1][x][SRow::_2] = x;
+			out[SRow::_2][x][SRow::_2] = m2;
+			out[SRow::_3][x][SRow::_2] = m3;
 
-			out[SColumn::_0][x][SColumn::_3] = m3;
-			out[SColumn::_1][x][SColumn::_3] = x;
-			out[SColumn::_2][x][SColumn::_3] = x;
-			out[SColumn::_3][x][SColumn::_3] = m2;
+			out[SRow::_0][x][SRow::_3] = m3;
+			out[SRow::_1][x][SRow::_3] = x;
+			out[SRow::_2][x][SRow::_3] = x;
+			out[SRow::_3][x][SRow::_3] = m2;
 		}
 		Self(out)
 	}
 
 	fn new_inv(coeffs: &MixColCoeffs, poly: Poly) -> Self {
-		let mut out: ColumnMap<XArr<ColumnMap<X>>> = Default::default();
+		let mut out: RowMap<XArr<RowMap<X>>> = Default::default();
 		for x in X::all() {
 			let m9 = Self::gf_mul(x, coeffs.c9, poly);
 			let m11 = Self::gf_mul(x, coeffs.c11, poly);
 			let m13 = Self::gf_mul(x, coeffs.c13, poly);
 			let m14 = Self::gf_mul(x, coeffs.c14, poly);
 
-			out[SColumn::_0][x][SColumn::_0] = m14;
-			out[SColumn::_1][x][SColumn::_0] = m11;
-			out[SColumn::_2][x][SColumn::_0] = m13;
-			out[SColumn::_3][x][SColumn::_0] = m9;
+			out[SRow::_0][x][SRow::_0] = m14;
+			out[SRow::_1][x][SRow::_0] = m11;
+			out[SRow::_2][x][SRow::_0] = m13;
+			out[SRow::_3][x][SRow::_0] = m9;
 
-			out[SColumn::_0][x][SColumn::_1] = m9;
-			out[SColumn::_1][x][SColumn::_1] = m14;
-			out[SColumn::_2][x][SColumn::_1] = m11;
-			out[SColumn::_3][x][SColumn::_1] = m13;
+			out[SRow::_0][x][SRow::_1] = m9;
+			out[SRow::_1][x][SRow::_1] = m14;
+			out[SRow::_2][x][SRow::_1] = m11;
+			out[SRow::_3][x][SRow::_1] = m13;
 
-			out[SColumn::_0][x][SColumn::_2] = m13;
-			out[SColumn::_1][x][SColumn::_2] = m9;
-			out[SColumn::_2][x][SColumn::_2] = m14;
-			out[SColumn::_3][x][SColumn::_2] = m11;
+			out[SRow::_0][x][SRow::_2] = m13;
+			out[SRow::_1][x][SRow::_2] = m9;
+			out[SRow::_2][x][SRow::_2] = m14;
+			out[SRow::_3][x][SRow::_2] = m11;
 
-			out[SColumn::_0][x][SColumn::_3] = m11;
-			out[SColumn::_1][x][SColumn::_3] = m13;
-			out[SColumn::_2][x][SColumn::_3] = m9;
-			out[SColumn::_3][x][SColumn::_3] = m14;
+			out[SRow::_0][x][SRow::_3] = m11;
+			out[SRow::_1][x][SRow::_3] = m13;
+			out[SRow::_2][x][SRow::_3] = m9;
+			out[SRow::_3][x][SRow::_3] = m14;
 		}
 		Self(out)
 	}
 
-	pub fn get_column(&self, tboxv: X, i: SColumn) -> Column {
-		Column(self.0[i][tboxv].0)
+	pub fn get_row(&self, tboxv: X, i: SRow) -> Row {
+		Row(self.0[i][tboxv].0)
 	}
 }

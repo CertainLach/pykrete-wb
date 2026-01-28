@@ -23,7 +23,7 @@ use crate::tbox::{Tbox, Tboxes};
 use crate::ty::Ty;
 use crate::tybox::{Work, WorkRounds};
 use crate::xor::ShiftRowsBijection;
-use crate::{RI, RIArr, RowMap, SPos, SRow, State, StateMap, Tables, X, XArr, add_round_key};
+use crate::{RI, RIArr, ColumnMap, SPos, SColumn, State, StateMap, Tables, X, XArr, add_round_key};
 
 use crate::consts::{INV_SHIFT_ROWS_TAB, SHIFT_ROWS_TAB};
 use crate::sbox::PrecomputedSBox;
@@ -273,9 +273,9 @@ impl<const NRM1: usize> WorkRounds<NRM1> {
 			let r = RI(r);
 			Work(StateMap::from_fn(|pos| {
 				XArr::from_fn(|x| {
-					let i = pos.column();
+					let i = pos.row();
 					let tboxv = tboxes.get(r, x, pos);
-					ty.get(r).get_column(tboxv, i)
+					ty.get(r).get_row(tboxv, i)
 				})
 			}))
 		})))
@@ -351,29 +351,29 @@ impl<const NRM1: usize> Tables<NRM1> {
 struct Delta4(StateMap<Delta>);
 
 #[derive(Debug, Clone, Copy)]
-pub struct Dual4(RowMap<Dual>);
+pub struct Dual4(ColumnMap<Dual>);
 impl Dual4 {
 	const STANDARD: Self = Self::uniform(Dual::STANDARD);
 	fn random<R: Rng>(rng: &mut R) -> Self {
-		Self(RowMap::from_fn(|_| Dual::random(rng)))
+		Self(ColumnMap::from_fn(|_| Dual::random(rng)))
 	}
 	pub const fn uniform(dual: Dual) -> Self {
-		Self(RowMap([dual, dual, dual, dual]))
+		Self(ColumnMap([dual, dual, dual, dual]))
 	}
 
 	fn delta(&self, curr: Dual4, shift_rows: &ShiftRowsBijection) -> Delta4 {
 		Delta4(StateMap::from_fn(|pos| {
-			let row = pos.row();
-			let prev_row = shift_rows.map(pos).row();
+			let column = pos.column();
+			let prev_column = shift_rows.map(pos).column();
 
-			self.0[prev_row].delta(curr.0[row])
+			self.0[prev_column].delta(curr.0[column])
 		}))
 	}
 
 	fn delta_inv(&self, to: Dual4) -> Delta4 {
 		Delta4(StateMap::from_fn(|pos| {
-			let row = pos.row();
-			self.0[row].delta(to.0[row])
+			let column = pos.column();
+			self.0[column].delta(to.0[column])
 		}))
 	}
 }
@@ -443,7 +443,7 @@ impl Work {
 	}
 }
 
-pub struct KarroumiTy4<const NRM1: usize>(RIArr<RowMap<Ty>, NRM1>);
+pub struct KarroumiTy4<const NRM1: usize>(RIArr<ColumnMap<Ty>, NRM1>);
 
 impl<const NRM1: usize> KarroumiTy4<NRM1> {
 	pub fn new(inv: bool, config: &KarroumiConfig4<NRM1>) -> Self {
@@ -454,15 +454,15 @@ impl<const NRM1: usize> KarroumiTy4<NRM1> {
 				} else {
 					&config.rounds[RI(NRM1 - dec_idx.0)]
 				};
-				RowMap::from_fn(|row| Ty::new(inv, enc_config.0[row]))
+				ColumnMap::from_fn(|row| Ty::new(inv, enc_config.0[row]))
 			})
 		} else {
-			RIArr::from_fn(|r| RowMap::from_fn(|row| Ty::new(inv, config.rounds[r].0[row])))
+			RIArr::from_fn(|r| ColumnMap::from_fn(|row| Ty::new(inv, config.rounds[r].0[row])))
 		})
 	}
 
-	pub fn get(&self, r: RI, row: SRow) -> &Ty {
-		&self.0[r][row]
+	pub fn get_column(&self, r: RI, column: SColumn) -> &Ty {
+		&self.0[r][column]
 	}
 }
 
@@ -499,7 +499,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			let mut transformed_rk = round_keys.rounds[r].clone();
 			for key_pos in SPos::all() {
 				let state_pos = INV_SHIFT_ROWS_TAB.map(key_pos);
-				let q = Q::for_dual(config.rounds[r].0[state_pos.row()]);
+				let q = Q::for_dual(config.rounds[r].0[state_pos.column()]);
 				transformed_rk.0[key_pos.0] = q.apply(round_keys.rounds[r].0[key_pos.0]);
 			}
 
@@ -507,7 +507,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 				let mut state = State::from_x(x);
 				add_shifted_round_key(&mut state, &transformed_rk, &SHIFT_ROWS_TAB);
 				for pos in SPos::all() {
-					let sbox = sbox_fn(config.rounds[r].0[pos.row()]);
+					let sbox = sbox_fn(config.rounds[r].0[pos.column()]);
 					state[pos] = sbox.sub_byte(state[pos]);
 				}
 				*xbox = state;
@@ -519,12 +519,12 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 		let mut transformed_a = a.clone();
 		for key_pos in SPos::all() {
 			let state_pos = INV_SHIFT_ROWS_TAB.map(key_pos);
-			let q = Q::for_dual(config.last.0[state_pos.row()]);
+			let q = Q::for_dual(config.last.0[state_pos.column()]);
 			transformed_a.0[key_pos.0] = q.apply(a.0[key_pos.0]);
 		}
 		let mut transformed_b = b.clone();
 		for pos in SPos::all() {
-			let q = Q::for_dual(config.last.0[pos.row()]);
+			let q = Q::for_dual(config.last.0[pos.column()]);
 			transformed_b.0[pos.0] = q.apply(b.0[pos.0]);
 		}
 
@@ -532,7 +532,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			let mut state = State::from_x(x);
 			add_shifted_round_key(&mut state, &transformed_a, &SHIFT_ROWS_TAB);
 			for pos in SPos::all() {
-				let sbox = sbox_fn(config.last.0[pos.row()]);
+				let sbox = sbox_fn(config.last.0[pos.column()]);
 				state[pos] = sbox.sub_byte(state[pos]);
 			}
 			add_round_key(&mut state, &transformed_b);
@@ -556,12 +556,12 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 		let mut transformed_b = b.clone();
 		for key_pos in SPos::all() {
 			let state_pos = SHIFT_ROWS_TAB.map(key_pos);
-			let q = Q::for_dual(config.last.0[state_pos.row()]);
+			let q = Q::for_dual(config.last.0[state_pos.column()]);
 			transformed_b.0[key_pos.0] = q.apply(b.0[key_pos.0]);
 		}
 		let mut transformed_a = a.clone();
 		for pos in SPos::all() {
-			let q = Q::for_dual(config.last.0[pos.row()]);
+			let q = Q::for_dual(config.last.0[pos.column()]);
 			transformed_a.0[pos.0] = q.apply(a.0[pos.0]);
 		}
 
@@ -570,7 +570,7 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 			let mut state = State::from_x(x);
 			add_shifted_round_key(&mut state, &transformed_b, &INV_SHIFT_ROWS_TAB);
 			for pos in SPos::all() {
-				let inv_sbox = PrecomputedSBox::inversed(&sbox_fn(config.last.0[pos.row()]));
+				let inv_sbox = PrecomputedSBox::inversed(&sbox_fn(config.last.0[pos.column()]));
 				state[pos] = inv_sbox.sub_byte(state[pos]);
 			}
 			add_round_key(&mut state, &transformed_a);
@@ -584,14 +584,14 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 
 			let mut transformed_rk = round_keys.rounds[RI(enc_round)].clone();
 			for pos in SPos::all() {
-				let q = Q::for_dual(round_cfg.0[pos.row()]);
+				let q = Q::for_dual(round_cfg.0[pos.column()]);
 				transformed_rk.0[pos.0] = q.apply(round_keys.rounds[RI(enc_round)].0[pos.0]);
 			}
 
 			for (x, xbox) in tboxes_arr[dec_idx].0.iter_mut() {
 				let mut state = State::from_x(x);
 				for pos in SPos::all() {
-					let inv_sbox = PrecomputedSBox::inversed(&sbox_fn(round_cfg.0[pos.row()]));
+					let inv_sbox = PrecomputedSBox::inversed(&sbox_fn(round_cfg.0[pos.column()]));
 					state[pos] = inv_sbox.sub_byte(state[pos]);
 				}
 				add_round_key(&mut state, &transformed_rk);
@@ -602,14 +602,14 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 		let round_cfg = &config.rounds[RI(0)];
 		let mut transformed_rk = round_keys.rounds[RI(0)].clone();
 		for pos in SPos::all() {
-			let q = Q::for_dual(round_cfg.0[pos.row()]);
+			let q = Q::for_dual(round_cfg.0[pos.column()]);
 			transformed_rk.0[pos.0] = q.apply(round_keys.rounds[RI(0)].0[pos.0]);
 		}
 
 		let last = XArr(X::ALL.map(|x| {
 			let mut state = State::from_x(x);
 			for pos in SPos::all() {
-				let inv_sbox = PrecomputedSBox::inversed(&sbox_fn(round_cfg.0[pos.row()]));
+				let inv_sbox = PrecomputedSBox::inversed(&sbox_fn(round_cfg.0[pos.column()]));
 				state[pos] = inv_sbox.sub_byte(state[pos]);
 			}
 			add_round_key(&mut state, &transformed_rk);
@@ -626,9 +626,9 @@ impl<const NRM1: usize> WorkRounds<NRM1> {
 			let r = RI(r);
 			Work(StateMap::from_fn(|pos| {
 				XArr::from_fn(|x| {
-					let col = pos.column();
+					let row = pos.row();
 					let tboxv = tboxes.get(r, x, pos);
-					ty.get(r, pos.row()).get_column(tboxv, col)
+					ty.get_column(r, pos.column()).get_row(tboxv, row)
 				})
 			}))
 		})))
@@ -974,7 +974,7 @@ use crate::Security;
 	fn d4_with_nonstandard_base(security: bool) {
 		let rng = &mut rng();
 
-		let base = Dual4(RowMap::from_fn(|col| {
+		let base = Dual4(ColumnMap::from_fn(|col| {
 			Dual::new(
 				IRREDUCIBLE_POLYNOMIALS[col.as_index() + 1],
 				col.as_index() % 8,
@@ -1087,13 +1087,13 @@ use crate::Security;
 	fn d4_different_columns_per_round() {
 		let config = KarroumiConfig4::<9> {
 			rounds: RIArr::from_fn(|r| {
-				Dual4(RowMap::from_fn(|col| {
+				Dual4(ColumnMap::from_fn(|col| {
 					let poly_idx = (r.0 + col.as_index()) % 30;
 					let power = (r.0 * 2 + col.as_index()) % 8;
 					Dual::new(IRREDUCIBLE_POLYNOMIALS[poly_idx], power)
 				}))
 			}),
-			last: Dual4(RowMap::from_fn(|col| {
+			last: Dual4(ColumnMap::from_fn(|col| {
 				Dual::new(
 					IRREDUCIBLE_POLYNOMIALS[col.as_index() + 10],
 					col.as_index() % 8,

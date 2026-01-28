@@ -25,7 +25,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct XorEncodingSingle(RowMap<ColumnMap<HighLowMap<Bijection4>>>);
+pub struct XorEncodingSingle(ColumnMap<ColumnMap<HighLowMap<Bijection4>>>);
 impl XorEncodingSingle {
 	pub fn identity() -> Self {
 		Self(Default::default())
@@ -38,7 +38,7 @@ impl Default for XorEncodingSingle {
 }
 impl Distribution<XorEncodingSingle> for StandardUniform {
 	fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> XorEncodingSingle {
-		let out: RowMap<ColumnMap<HighLowMap<Bijection4>>> = rng.random();
+		let out: ColumnMap<ColumnMap<HighLowMap<Bijection4>>> = rng.random();
 		XorEncodingSingle(out)
 	}
 }
@@ -51,16 +51,16 @@ pub struct XorEncoding {
 impl XorEncoding {
 	pub fn random_from_tyi<R: Rng>(
 		rng: &mut R,
-		tyi_output_coding: ColumnMap<XorEncodingSingle>,
+		tyi_output_coding: RowMap<XorEncodingSingle>,
 	) -> Self {
 		let xor_high: PurposeMap<XorEncodingSingle> = PurposeMap([
-			tyi_output_coding[SColumn::_0].clone(),
-			tyi_output_coding[SColumn::_1].clone(),
+			tyi_output_coding[SRow::_0].clone(),
+			tyi_output_coding[SRow::_1].clone(),
 			rng.random(),
 		]);
 		let xor_low: PurposeMap<XorEncodingSingle> = PurposeMap([
-			tyi_output_coding[SColumn::_2].clone(),
-			tyi_output_coding[SColumn::_3].clone(),
+			tyi_output_coding[SRow::_2].clone(),
+			tyi_output_coding[SRow::_3].clone(),
 			rng.random(),
 		]);
 		let xor_output: PurposeMap<XorEncodingSingle> = PurposeMap([
@@ -88,11 +88,11 @@ impl XorRound {
 		table_purpose: Purpose,
 		encoding: &PurposeMap<XorEncodingSingle>,
 	) {
-		for i in SRow::ALL {
+		for i in SColumn::ALL {
 			for high_low in HighLow::ALL {
 				for j in SColumn::ALL {
 					for a in U4::ALL {
-						let table = &mut self.0[i][table_purpose][SRow(j.0)][high_low][a];
+						let table = &mut self.0[i][table_purpose][j][high_low][a];
 						let output_bijection = NibbleMap(U4::ALL.map(|b| {
 							let perm1 = &encoding[Purpose::High].0[i][j][high_low];
 							let a = perm1.unmap(a);
@@ -114,7 +114,7 @@ impl Work {
 	pub fn encode(
 		&mut self,
 		input_encoding: &Option<XorEncodingSingle>,
-		output_encoding: &Option<ColumnMap<XorEncodingSingle>>,
+		output_encoding: &Option<RowMap<XorEncodingSingle>>,
 		shift: &ShiftRowsBijection,
 	) {
 		for pos in SPos::all() {
@@ -125,11 +125,11 @@ impl Work {
 
 				if let Some(input_encoding) = input_encoding {
 					let (a, b) = temp.as_nibs();
-					let a = input_encoding.0[shifted_index.row()][shifted_index.column()]
-						[HighLow::High]
+					let a = input_encoding.0[shifted_index.column()]
+						[SColumn(shifted_index.row().0)][HighLow::High]
 						.unmap(a);
-					let b = input_encoding.0[shifted_index.row()][shifted_index.column()]
-						[HighLow::Low]
+					let b = input_encoding.0[shifted_index.column()]
+						[SColumn(shifted_index.row().0)][HighLow::Low]
 						.unmap(b);
 					temp = X::nibs(a, b);
 				}
@@ -138,14 +138,13 @@ impl Work {
 
 				if let Some(output_encoding) = output_encoding {
 					for high_low in HighLow::ALL {
-						for row in SRow::ALL {
-							let v = res.row_nibble(row, high_low);
+						for column in SColumn::ALL {
+							let v = res.column_nibble(column, high_low);
 
-							let v = output_encoding[pos.column()].0[pos.row()][SColumn(row.0)]
-								[high_low]
-								.map(v);
+							let v =
+								output_encoding[pos.row()].0[pos.column()][column][high_low].map(v);
 
-							res.set_row_nibble(row, high_low, v)
+							res.set_column_nibble(column, high_low, v)
 						}
 					}
 				}
@@ -169,10 +168,10 @@ impl Tbox {
 
 				let (a, b) = x.as_nibs();
 
-				let enc1 = input_encoding.0[shifted_index.row()][shifted_index.column()]
+				let enc1 = input_encoding.0[shifted_index.column()][SColumn(shifted_index.row().0)]
 					[HighLow::High]
 					.unmap(a);
-				let enc2 = input_encoding.0[shifted_index.row()][shifted_index.column()]
+				let enc2 = input_encoding.0[shifted_index.column()][SColumn(shifted_index.row().0)]
 					[HighLow::Low]
 					.unmap(b);
 

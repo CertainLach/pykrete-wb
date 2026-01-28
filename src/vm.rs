@@ -20,7 +20,7 @@ use rand::{Rng, rng};
 
 use crate::consts::{INV_SHIFT_ROWS_TAB, SHIFT_ROWS_TAB};
 use crate::{
-	HighLow, Purpose, PurposeMap, RI, RowMap, SColumn, SPos, SRow, StateMap, Step, Tables, X,
+	HighLow, Purpose, PurposeMap, RI, ColumnMap, SRow, SPos, SColumn, StateMap, Step, Tables, X,
 };
 
 #[derive(Clone, Copy)]
@@ -256,7 +256,7 @@ pub fn vmout<const NRM1: usize>(
 
 	for r in RI::all::<NRM1>() {
 		state = StateMap::from_fn(|pos| state[shift_rows.map(pos)]);
-		for row in SRow::all() {
+		for row in SColumn::all() {
 			for step in Step::ALL {
 				if matches!(step, Step::Mbl) && !tables.uses_mbl {
 					continue;
@@ -265,9 +265,9 @@ pub fn vmout<const NRM1: usize>(
 					Step::Tybox => &tables.tyboxes.0[r],
 					Step::Mbl => &tables.mbl.0[r],
 				};
-				let [aa, bb, cc, dd] = SColumn::ALL.map(|column| {
-					let pos = SPos::row_column(row, column);
-					RowMap::from_fn(|r| {
+				let [aa, bb, cc, dd] = SRow::ALL.map(|column| {
+					let pos = SPos::column_row(row, column);
+					ColumnMap::from_fn(|r| {
 						let m =
 							vm.alloc_memory(work.0[pos].0.into_iter().map(|c| c[r].0).collect());
 						vm.select(m, state[pos])
@@ -282,7 +282,7 @@ pub fn vmout<const NRM1: usize>(
 				if let Some(xor) = xor {
 					let xor = xor.partial_map(r, row);
 
-					let n01 = |vm: &mut VM, v: SRow, n: HighLow| {
+					let n01 = |vm: &mut VM, v: SColumn, n: HighLow| {
 						let purp = PurposeMap::from_fn(|p| {
 							vm.alloc_memory(
 								X::ALL
@@ -309,19 +309,19 @@ pub fn vmout<const NRM1: usize>(
 						let o = vm.concat(a, b);
 						vm.select_nib(purp[Purpose::Output], o)
 					};
-					let n0123 = |vm: &mut VM, v: SRow| {
+					let n0123 = |vm: &mut VM, v: SColumn| {
 						let a = n01(vm, v, HighLow::High);
 						let b = n01(vm, v, HighLow::Low);
 						vm.concat(a, b)
 					};
 
-					for column in SRow::ALL {
-						state[SPos::row_column(row, SColumn(column.0))] = n0123(&mut vm, column);
+					for column in SColumn::ALL {
+						state[SPos::column_row(row, SRow(column.0))] = n0123(&mut vm, column);
 					}
 				} else {
-					let n0123 = |vm: &mut VM, v: SRow| vm.xor4(aa[v], bb[v], cc[v], dd[v]);
-					for column in SRow::ALL {
-						state[SPos::row_column(row, SColumn(column.0))] = n0123(&mut vm, column);
+					let n0123 = |vm: &mut VM, v: SColumn| vm.xor4(aa[v], bb[v], cc[v], dd[v]);
+					for column in SColumn::ALL {
+						state[SPos::column_row(row, SRow(column.0))] = n0123(&mut vm, column);
 					}
 				}
 			}
