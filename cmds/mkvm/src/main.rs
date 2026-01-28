@@ -37,7 +37,6 @@ enum Language {
 	Js,
 	Python,
 	Rust,
-	/// Note: it won't be possible to compile the generated code using standard javac, as is is too large
 	Java,
 }
 
