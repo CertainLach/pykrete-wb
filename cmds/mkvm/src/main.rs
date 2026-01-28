@@ -140,8 +140,7 @@ enum Opts {
 		no_l: bool,
 		/// Do not use mixing bijections, reduces the attack complexity
 		///
-		/// Can greately reduce the code size, but right now it can only make
-		/// it much more compressible (XOR tables will have very repetetive pattern).
+		/// Greately reduces the code size
 		#[clap(long)]
 		no_internal_encodings: bool,
 
@@ -265,6 +264,7 @@ fn main() -> anyhow::Result<()> {
 							internal_encodings: !no_internal_encodings,
 							force_mbl: false,
 							force_mbl_xor: false,
+							force_xor: false,
 						},
 						&mut rng,
 					);

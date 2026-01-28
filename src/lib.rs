@@ -68,9 +68,11 @@ pub struct Security {
 	// Always use mb + l matrices, even if without bijections.
 	// Only makes effect with both mb and l are unused.
 	pub force_mbl: bool,
-	// Always use dedicated xor table for mbl. Only has effect when mbl is used,
+	// Always use xor table for mbl.
 	// either due to mb/l enabled, or when force_mbl is enabled.
 	pub force_mbl_xor: bool,
+	/// Always use xor table for tyboxes
+	pub force_xor: bool,
 
 	// Internal encodings intermixes values using xor tables, tying rounds together
 	pub internal_encodings: bool,
@@ -80,9 +82,10 @@ impl Security {
 		Self {
 			mb: true,
 			l: true,
-			force_mbl: false,
-			force_mbl_xor: false,
 			internal_encodings: true,
+			force_mbl: false,
+			force_xor: false,
+			force_mbl_xor: false,
 		}
 	}
 }
@@ -93,6 +96,7 @@ impl<const NRM1: usize> Tables<NRM1> {
 			mb,
 			l,
 			force_mbl,
+			force_xor,
 			internal_encodings,
 			force_mbl_xor,
 		} = security;
@@ -145,8 +149,14 @@ impl<const NRM1: usize> Tables<NRM1> {
 						continue;
 					}
 					let (work, xor, shift) = match step {
-						Step::Tybox => (&mut tyboxes.0[r], &mut xor, shift_rows),
-						Step::Mbl => (&mut mbl.0[r], &mut xor_mbl, &ShiftRowsBijection::IDENTITY),
+						Step::Tybox => {
+							self.uses_xor = true;
+							(&mut tyboxes.0[r], &mut xor, shift_rows)
+						}
+						Step::Mbl => {
+							self.uses_xor_mbl = true;
+							(&mut mbl.0[r], &mut xor_mbl, &ShiftRowsBijection::IDENTITY)
+						}
 					};
 					let tyi_output_coding: ColumnMap<XorEncodingSingle> = rng.random();
 
@@ -167,13 +177,20 @@ impl<const NRM1: usize> Tables<NRM1> {
 			}
 		}
 
-		let uses_xor_mbl = uses_mbl && internal_encodings || force_mbl_xor || self.uses_xor_mbl;
-		self.uses_xor_mbl |= uses_xor_mbl;
+		if force_mbl_xor {
+			self.uses_xor_mbl = true;
+		}
+		if force_xor {
+			self.uses_xor = true;
+		}
 	}
 }
 
 #[derive(Debug)]
 pub struct Tables<const NRM1: usize> {
+	/// Is that a decryption tables, and inverse shift rows should be used in `cipher`
+	pub(crate) inv: bool,
+
 	/// Ty performs MixColumns transform, tybox is Ty+Tbox for every round except last
 	///
 	/// Consists of
@@ -184,13 +201,10 @@ pub struct Tables<const NRM1: usize> {
 	///
 	/// External input encoding might be applied here for the first round
 	pub(crate) tyboxes: WorkRounds<NRM1>,
-	/// Tbox performs AddRoundKeys, SubBytes transform, last round doesn't need anything else
-	///
-	/// External output encoding might be applied here for the last round
-	pub(crate) tboxes_last: Tbox,
-
-	/// Is that a decryption tables, and inverse shift rows should be used in `cipher`
-	pub(crate) inv: bool,
+	/// Are internal encodings used for tyboxes?
+	pub(crate) uses_xor: bool,
+	/// XOR tables for tyboxes
+	pub(crate) xor: Xor<NRM1>,
 
 	/// Inverse of the optional mixing bijections applied to tyboxes for the all rounds except last
 	///
@@ -200,24 +214,19 @@ pub struct Tables<const NRM1: usize> {
 	///
 	/// Application of this table is only required if `uses_mbl` is enabled
 	pub(crate) mbl: WorkRounds<NRM1>,
-
 	/// Are MB/L were applied to tyboxes, and it is required to apply MBL lookup table.
 	/// Note that the table is always available and populated with identity mixing bijections,
 	/// so it should be safe to enable this flag unconditionally.
 	pub(crate) uses_mbl: bool,
-
-	/// XOR tables for tyboxes, and for mbl in absense of internal encodings
-	pub(crate) xor: Xor<NRM1>,
-
-	/// XOR tables for mixed bijections, should be used when `uses_xor_mbl` is enabled
+	/// Are internal encodings used for mbl?
+	pub(crate) uses_xor_mbl: bool,
+	/// XOR tables for mixed bijections
 	pub(crate) xor_mbl: Xor<NRM1>,
 
-	/// Is different set of XOR tables required for mixed bijections lookup table?
-	/// Note that the xor tables are always available and populated with identity mixing,
-	/// so it should be safe to enable this flag uncoditionally.
+	/// Tbox performs AddRoundKeys, SubBytes transform, last round doesn't need anything else
 	///
-	/// They are only required when internal encodings are used.
-	pub(crate) uses_xor_mbl: bool,
+	/// External output encoding might be applied here for the last round
+	pub(crate) tboxes_last: Tbox,
 }
 
 enum Step {
@@ -252,6 +261,7 @@ impl<const NRM1: usize> Tables<NRM1> {
 			xor: Xor::identity(),
 			xor_mbl: Xor::identity(),
 			uses_xor_mbl: false,
+			uses_xor: false,
 		}
 	}
 
@@ -346,28 +356,39 @@ impl<const NRM1: usize> Tables<NRM1> {
 						work.0[pos][data[pos]]
 					});
 					let xor = match step {
-						Step::Mbl if self.uses_xor_mbl || self.uses_mbl => &self.xor_mbl,
-						_ => &self.xor,
+						Step::Mbl if self.uses_xor_mbl => Some(&self.xor_mbl),
+						Step::Tybox if self.uses_xor => Some(&self.xor),
+						_ => None,
 					};
-					let xor = xor.partial_map(r, row);
+					if let Some(xor) = xor {
+						let xor = xor.partial_map(r, row);
 
-					let n01 = |v: SRow, n: HighLow| {
-						let a = xor.map(
-							Purpose::High,
-							v,
-							n,
-							aa.row_nibble(v, n),
-							bb.row_nibble(v, n),
-						);
-						let b =
-							xor.map(Purpose::Low, v, n, cc.row_nibble(v, n), dd.row_nibble(v, n));
+						let n01 = |v: SRow, n: HighLow| {
+							let a = xor.map(
+								Purpose::High,
+								v,
+								n,
+								aa.row_nibble(v, n),
+								bb.row_nibble(v, n),
+							);
+							let b = xor.map(
+								Purpose::Low,
+								v,
+								n,
+								cc.row_nibble(v, n),
+								dd.row_nibble(v, n),
+							);
 
-						xor.map(Purpose::Output, v, n, a, b)
-					};
+							xor.map(Purpose::Output, v, n, a, b)
+						};
 
-					let n0123 = |v: SRow| X::nibs(n01(v, HighLow::High), n01(v, HighLow::Low));
+						let n0123 = |v: SRow| X::nibs(n01(v, HighLow::High), n01(v, HighLow::Low));
 
-					data.set_row(row, Row(SRow::ALL.map(n0123)));
+						data.set_row(row, Row(SRow::ALL.map(n0123)));
+					} else {
+						let n0123 = |v: SRow| aa[v] ^ bb[v] ^ cc[v] ^ dd[v];
+						data.set_row(row, Row(SRow::ALL.map(n0123)));
+					}
 				}
 			}
 		}
@@ -382,58 +403,6 @@ impl<const NRM1: usize> Tables<NRM1> {
 		// sub_bytes + add_round_key
 		self.tboxes_last.apply(data);
 	}
-	// fn codegen_last_round_item(&self, v: U4, constants: &mut Vec<TokenStream>) -> TokenStream {
-	//     let mut tbox_last_transposed: XArr<X> = Default::default();
-	//     for (i, ele) in tbox_last_transposed.iter_mut() {
-	//         *ele = self.encrypting.tboxes_last.0[i][v];
-	//     }
-	//     let tbox_i = format_ident!("TBOX_SUBST_{}", v.as_index());
-	//     constants.push(quote! {
-	//         const #tbox_i: XArr<X> = #tbox_last_transposed;
-	//     });
-	//     quote! {
-	//         state[#v] = #tbox_i[state[#v]];
-	//     }
-	// }
-	// fn codegen(&self) -> TokenStream {
-	//     let mut constants = Vec::new();
-	//     let mut rounds = Vec::new();
-	//
-	//     for r in RI::all::<NRM1>() {
-	//         rounds.push(quote! {
-	//             shift_rows(state);
-	//         });
-	//
-	//         // tbox + ty(i)
-	//         for j in U2::all() {
-	//             for step in [Step::Tybox, Step::Mbl] {
-	//                 for i in U2::ALL {
-	//                     let data = match step {
-	//                         Step::Tybox => {
-	//                             let data = self.encrypting.tyboxes.0[r].0[U4::ji(j, i)];
-	//                             //[data[U4::ji(j, i)]];
-	//                             data
-	//                         }
-	//                         Step::Mbl => {
-	//                             let mut lt: XArr<Column> = Default::default();
-	//                             for (x, ele) in lt.iter_mut() {
-	//                                 *ele = Column(self.encrypting.mbl[r][x][U4::ji(j, i)]);
-	//                             }
-	//                             lt
-	//                         }
-	//                     };
-	//                 }
-	//             }
-	//         }
-	//     }
-	//
-	//     let last_round = U4::all().map(|v| self.codegen_last_round_item(v, &mut constants));
-	//     quote! {
-	//         #(#rounds)*
-	//         shift_rows(state);
-	//         #(#last_round)*
-	//     }
-	// }
 }
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
@@ -1250,16 +1219,7 @@ mod tests {
 	#[test_log::test]
 	fn normal() {
 		let mut tables = Aes128Tables::from_key(Aes128Key::NIST_CFB_E2, false);
-		tables.apply_security(
-			Security {
-				mb: true,
-				l: true,
-				internal_encodings: false,
-				force_mbl: false,
-				force_mbl_xor: false,
-			},
-			&mut rng(),
-		);
+		tables.apply_security(Security::full(), &mut rng());
 
 		const NIST_MESSAGE_CFB_E2: [u8; 64] = [
 			0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93,
@@ -1290,13 +1250,7 @@ mod tests {
 
 	#[test]
 	fn inv() {
-		let s = Security {
-			mb: true,
-			l: true,
-			internal_encodings: false,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
+		let s = Security::full();
 		let mut tables = Aes128Tables::from_key(Aes128Key::KUNG_FU_TEST_VECTOR, false);
 		tables.apply_security(s, &mut rng());
 		let mut tables_inv = Aes128Tables::from_key(Aes128Key::KUNG_FU_TEST_VECTOR, true);
@@ -1312,13 +1266,7 @@ mod tests {
 	#[test]
 	fn external_encoding() {
 		let rng = &mut rng();
-		let s = Security {
-			mb: true,
-			l: true,
-			internal_encodings: true,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
+		let s = Security::full();
 
 		let encoding: ExternalEncoding = rng.random();
 		let encoding2: ExternalEncoding = rng.random();
@@ -1351,13 +1299,7 @@ mod tests {
 	#[test]
 	fn external_encoding_standalone() {
 		let rng = &mut rng();
-		let s = Security {
-			mb: true,
-			l: true,
-			internal_encodings: false,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
+		let s = Security::full();
 
 		let encoding: ExternalEncoding = rng.random();
 
@@ -1374,13 +1316,7 @@ mod tests {
 	#[test]
 	fn external_decoding_standalone() {
 		let rng = &mut rng();
-		let s = Security {
-			mb: true,
-			l: true,
-			internal_encodings: false,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
+		let s = Security::full();
 
 		let encoding: ExternalEncoding = rng.random();
 
@@ -1398,13 +1334,7 @@ mod tests {
 	#[test]
 	fn self_cancelling_external_decoding_standalone() {
 		let rng = &mut rng();
-		let s = Security {
-			mb: true,
-			l: true,
-			internal_encodings: true,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
+		let s = Security::full();
 
 		let input_encoding: ExternalEncoding = rng.random();
 		let output_encoding: ExternalEncoding = rng.random();
@@ -1431,13 +1361,7 @@ mod tests {
 	fn inv_256() {
 		let mut key = [0; 32];
 		key[0] = 0x80;
-		let s = Security {
-			mb: true,
-			l: true,
-			internal_encodings: false,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
+		let s = Security::full();
 		let mut tables = Aes256Tables::from_key(Aes256Key::new(key), false);
 		tables.apply_security(s, &mut rng());
 		let mut tables_inv = Aes256Tables::from_key(Aes256Key::new(key), true);
@@ -1453,16 +1377,7 @@ mod tests {
 	#[test]
 	fn internal_encodings() {
 		let mut tables = Aes128Tables::from_key(Aes128Key::KUNG_FU_TEST_VECTOR, false);
-		tables.apply_security(
-			Security {
-				mb: true,
-				l: true,
-				internal_encodings: true,
-				force_mbl: false,
-				force_mbl_xor: false,
-			},
-			&mut rng(),
-		);
+		tables.apply_security(Security::full(), &mut rng());
 
 		let mut data = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
 		tables.cipher(&mut data);
@@ -1471,16 +1386,7 @@ mod tests {
 	#[test]
 	fn internal_encodings_inv() {
 		let mut tables = Aes128Tables::from_key(Aes128Key::KUNG_FU_TEST_VECTOR, true);
-		tables.apply_security(
-			Security {
-				mb: true,
-				l: true,
-				internal_encodings: true,
-				force_mbl: false,
-				force_mbl_xor: false,
-			},
-			&mut rng(),
-		);
+		tables.apply_security(Security::full(), &mut rng());
 
 		let mut data = State::TWO_ONE_NINE_TWO_AES128_KUNG_FU_TEST_VECTOR;
 		tables.cipher(&mut data);

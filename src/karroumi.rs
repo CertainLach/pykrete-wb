@@ -708,6 +708,7 @@ mod tests {
 	use super::*;
 	use crate::dual::IRREDUCIBLE_POLYNOMIALS;
 	use crate::key::Aes128Key;
+use crate::Security;
 
 	fn make_sbox(config: Dual) -> PrecomputedSBox {
 		PrecomputedSBox::for_dual(config)

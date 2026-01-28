@@ -43,7 +43,6 @@ struct VM {
 	memory: Vec<Memory>,
 
 	ops: Vec<Op>,
-	use_select_nibble: bool,
 }
 #[derive(Clone, Copy, PartialEq)]
 struct MemoryId(usize);
@@ -89,16 +88,10 @@ impl VM {
 		to
 	}
 	fn select_nib(&mut self, mem: MemoryId, idx: Local) -> Local {
-		if self.use_select_nibble {
-			let to = self.alloc_local_raw();
-			self.ops.push(Op::SelectNibble { mem, idx, to });
-			to
-		} else {
-			let byte_idx = self.div2(idx);
-			let byte = self.select(mem, byte_idx);
-			let nib_idx = self.mod2(idx);
-			self.nibble_dyn(byte, nib_idx)
-		}
+		let byte_idx = self.div2(idx);
+		let byte = self.select(mem, byte_idx);
+		let nib_idx = self.mod2(idx);
+		self.nibble_dyn(byte, nib_idx)
 	}
 	fn concat(&mut self, high: Local, low: Local) -> Local {
 		let to = self.alloc_local_raw();
@@ -114,6 +107,11 @@ impl VM {
 		let a = self.nibble(high, nib);
 		let b = self.nibble(low, nib);
 		self.concat(a, b)
+	}
+	fn xor4(&mut self, a: Local, b: Local, c: Local, d: Local) -> Local {
+		let to = self.alloc_local_raw();
+		self.ops.push(Op::Xor4 { a, b, c, d, to });
+		to
 	}
 	fn nibble_dyn(&mut self, from: Local, nib: Local) -> Local {
 		let to = self.alloc_local_raw();
@@ -147,11 +145,6 @@ enum Op {
 		idx: Local,
 		to: Local,
 	},
-	SelectNibble {
-		mem: MemoryId,
-		idx: Local,
-		to: Local,
-	},
 	ConcatNimbles {
 		high: Local,
 		low: Local,
@@ -177,6 +170,13 @@ enum Op {
 		from: Local,
 		to: Local,
 	},
+	Xor4 {
+		a: Local,
+		b: Local,
+		c: Local,
+		d: Local,
+		to: Local,
+	},
 }
 impl Op {
 	fn into_data(self) -> OpData {
@@ -192,11 +192,6 @@ impl Op {
 				op: self,
 			},
 			Op::Select { mem: _, idx, to } => OpData {
-				uses: [idx].into(),
-				provides: [to].into(),
-				op: self,
-			},
-			Op::SelectNibble { mem: _, idx, to } => OpData {
 				uses: [idx].into(),
 				provides: [to].into(),
 				op: self,
@@ -226,6 +221,11 @@ impl Op {
 				provides: [to].into(),
 				op: self,
 			},
+			Op::Xor4 { a, b, c, d, to } => OpData {
+				uses: [a, b, c, d].into(),
+				provides: [to].into(),
+				op: self,
+			},
 		}
 	}
 }
@@ -246,9 +246,6 @@ pub fn vmout<const NRM1: usize>(
 	no_reorder: bool,
 ) {
 	let mut vm = VM::default();
-	// if matches!(lang, Language::Java) {
-	// 	vm.use_select_nibble = true;
-	// }
 	let mut state = StateMap::from_fn(|i| vm.load_state(i.as_index()));
 
 	let shift_rows = if tables.inv {
@@ -276,47 +273,56 @@ pub fn vmout<const NRM1: usize>(
 						vm.select(m, state[pos])
 					})
 				});
+
 				let xor = match step {
-					Step::Mbl if tables.uses_xor_mbl || tables.uses_mbl => &tables.xor_mbl,
-					_ => &tables.xor,
+					Step::Mbl if tables.uses_xor_mbl => Some(&tables.xor_mbl),
+					Step::Tybox if tables.uses_xor => Some(&tables.xor),
+					_ => None,
 				};
-				let xor = xor.partial_map(r, row);
+				if let Some(xor) = xor {
+					let xor = xor.partial_map(r, row);
 
-				let n01 = |vm: &mut VM, v: SRow, n: HighLow| {
-					let purp = PurposeMap::from_fn(|p| {
-						vm.alloc_memory(
-							X::ALL
-								.map(|x| {
-									let (h, l) = x.as_nibs();
-									xor.map(p, v, n, h, l)
-								})
-								.chunks(2)
-								.map(|ch| {
-									assert_eq!(ch.len(), 2);
-									let l = ch[0];
-									let h = ch[1];
-									X::nibs(h, l).0
-								})
-								.collect(),
-						)
-					});
-					let a = vm.cascade1(aa[v], bb[v], n);
-					let a = vm.select_nib(purp[Purpose::High], a);
+					let n01 = |vm: &mut VM, v: SRow, n: HighLow| {
+						let purp = PurposeMap::from_fn(|p| {
+							vm.alloc_memory(
+								X::ALL
+									.map(|x| {
+										let (h, l) = x.as_nibs();
+										xor.map(p, v, n, h, l)
+									})
+									.chunks(2)
+									.map(|ch| {
+										assert_eq!(ch.len(), 2);
+										let l = ch[0];
+										let h = ch[1];
+										X::nibs(h, l).0
+									})
+									.collect(),
+							)
+						});
+						let a = vm.cascade1(aa[v], bb[v], n);
+						let a = vm.select_nib(purp[Purpose::High], a);
 
-					let b = vm.cascade1(cc[v], dd[v], n);
-					let b = vm.select_nib(purp[Purpose::Low], b);
+						let b = vm.cascade1(cc[v], dd[v], n);
+						let b = vm.select_nib(purp[Purpose::Low], b);
 
-					let o = vm.concat(a, b);
-					vm.select_nib(purp[Purpose::Output], o)
-				};
-				let n0123 = |vm: &mut VM, v: SRow| {
-					let a = n01(vm, v, HighLow::High);
-					let b = n01(vm, v, HighLow::Low);
-					vm.concat(a, b)
-				};
+						let o = vm.concat(a, b);
+						vm.select_nib(purp[Purpose::Output], o)
+					};
+					let n0123 = |vm: &mut VM, v: SRow| {
+						let a = n01(vm, v, HighLow::High);
+						let b = n01(vm, v, HighLow::Low);
+						vm.concat(a, b)
+					};
 
-				for column in SRow::ALL {
-					state[SPos::row_column(row, SColumn(column.0))] = n0123(&mut vm, column);
+					for column in SRow::ALL {
+						state[SPos::row_column(row, SColumn(column.0))] = n0123(&mut vm, column);
+					}
+				} else {
+					let n0123 = |vm: &mut VM, v: SRow| vm.xor4(aa[v], bb[v], cc[v], dd[v]);
+					for column in SRow::ALL {
+						state[SPos::row_column(row, SColumn(column.0))] = n0123(&mut vm, column);
+					}
 				}
 			}
 		}
@@ -424,7 +430,11 @@ pub fn vmout<const NRM1: usize>(
 			);
 			for (i, chunk) in data.chunks(64000 / 2).enumerate() {
 				if i != 0 {
-					print!("\").append(\"")
+					print!("\")");
+					if debug {
+						println!();
+					}
+					print!(".append(\"")
 				}
 				for b in chunk.iter() {
 					print!("{b:0>2x}");
@@ -446,7 +456,11 @@ pub fn vmout<const NRM1: usize>(
 			for ele in pass {
 				print!(",{ele}")
 			}
-			print!(");}}private static void _c{splits}(byte[]d");
+			print!(");}}");
+			if debug {
+				println!();
+			}
+			print!("private static void _c{splits}(byte[]d");
 			for ele in params {
 				print!(",{ele}")
 			}
@@ -468,22 +482,6 @@ pub fn vmout<const NRM1: usize>(
 						.cont_offset,
 					reg.used_index(*idx),
 				);
-				print!("{}", reg.alloc(*to, v))
-			}
-			Op::SelectNibble { mem, idx, to } => {
-				let v = if matches!(lang, Language::Java) {
-					format!(
-						"_rmn({},{})",
-						vm.memory
-							.iter()
-							.find(|m| m.id == *mem)
-							.expect("memdata")
-							.cont_offset,
-						reg.used_index(*idx),
-					)
-				} else {
-					panic!("select_nibble is only supported on java")
-				};
 				print!("{}", reg.alloc(*to, v))
 			}
 			Op::ConcatNimbles { high, low, to } => {
@@ -519,6 +517,16 @@ pub fn vmout<const NRM1: usize>(
 				} else {
 					print!("d[{to_idx}]={}", reg.used(*from))
 				}
+			}
+			Op::Xor4 { a, b, c, d, to } => {
+				let v = format!(
+					"{}^{}^{}^{}",
+					reg.used(*a),
+					reg.used(*b),
+					reg.used(*c),
+					reg.used(*d)
+				);
+				print!("{}", reg.alloc(*to, v))
 			}
 		}
 		for ele in cleanup_after_insn

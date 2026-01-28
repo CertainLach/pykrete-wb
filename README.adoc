@@ -98,16 +98,14 @@ Options:
       --input-encoding <INPUT_ENCODING>
           Apply external encoding on the input, external encoding can be created using `create-external-encoding` subcommand
           
-          The result will not be compatible with standard AES, you would need server side support for encrypting/decrypting the in
-put/output.
+          The result will not be compatible with standard AES, you would need server side support for encrypting/decrypting the input/output.
           
           If prefixed with ! - the inverse of the encoding is applied
 
       --output-encoding <OUTPUT_ENCODING>
           Apply external encoding on the output, external encoding can be created using `create-external-encoding` subcommand
           
-          The result will not be compatible with standard AES, you would need server side support for encrypting/decrypting the in
-put/output.
+          The result will not be compatible with standard AES, you would need server side support for encrypting/decrypting the input/output.
           
           If prefixed with ! - the inverse of the encoding is applied
 
@@ -142,8 +140,7 @@ put/output.
       --no-internal-encodings
           Do not use mixing bijections, reduces the attack complexity
           
-          Can greately reduce the code size, but right now it can only make it much more compressible (XOR tables will have very r
-epetetive pattern).
+          Greately reduces the code size
 
       --karroumi <KARROUMI>
           Use Karroumi whitebox scheme instead of plain Chow
@@ -157,8 +154,7 @@ epetetive pattern).
       --aes-dual <AES_DUAL>
           Generate an AES using non-standard affine transform, MixColumns and SBox are affected
           
-          The result will not be compatible with standard AES, you would need server side support for encrypting/decrypting the in
-put/output.
+          The result will not be compatible with standard AES, you would need server side support for encrypting/decrypting the input/output.
           
           Accepts a single integer 0-240 for the given AES dual cipher, defaults to zero for standard AES
           
