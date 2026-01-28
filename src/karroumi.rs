@@ -1059,20 +1059,25 @@ use crate::Security;
 			last: Dual4::uniform(single_config),
 		};
 
-		let tables1 = Tables::from_karroumi_key(
+		let mut tables1 = Tables::from_karroumi_key(
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
 			false,
 			Dual::STANDARD,
 			&config1,
 		);
-		let tables4 = Tables::from_karroumi4_key(
+		let mut tables4 = Tables::from_karroumi4_key(
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
 			false,
 			base,
 			&config4,
 		);
+
+		if security {
+			tables1.apply_security(Security::full(), rng);
+			tables4.apply_security(Security::full(), rng);
+		}
 
 		let mut data1 = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
 		let mut data4 = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
