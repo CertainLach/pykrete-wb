@@ -16,21 +16,16 @@
 use rand::Rng;
 
 use crate::dual::{Dual, Q};
-use crate::internal::XorEncoding;
 use crate::key::{Key, RoundKeys};
 use crate::mat::MatGF2;
-use crate::mb::{L, MB};
 use crate::sbox::SBox;
 use crate::tbox::{Tbox, Tboxes};
 use crate::ty::Ty;
 use crate::tybox::{Work, WorkRounds};
-use crate::xor::{ShiftRowsBijection, Xor};
+use crate::xor::ShiftRowsBijection;
 use crate::{RI, RIArr, RowMap, SPos, SRow, State, StateMap, Tables, X, XArr, add_round_key};
 
-use crate::ColumnMap;
-use crate::Security;
 use crate::consts::{INV_SHIFT_ROWS_TAB, SHIFT_ROWS_TAB};
-use crate::internal::XorEncodingSingle;
 use crate::sbox::PrecomputedSBox;
 
 #[derive(Debug)]
@@ -288,24 +283,20 @@ impl<const NRM1: usize> WorkRounds<NRM1> {
 }
 
 impl<const NRM1: usize> Tables<NRM1> {
-	pub fn from_karroumi_key<S: SBox, R: Rng, const NK: usize>(
-		rng: &mut R,
+	pub fn from_karroumi_key<S: SBox, const NK: usize>(
 		sbox_fn: impl Fn(Dual) -> S,
 		key: Key<NK>,
-		security: Security,
 		inv: bool,
 		base: Dual,
 		config: &KarroumiConfig<NRM1>,
 	) -> Self {
 		let round_keys = expand_karroumi_keys(&sbox_fn, key, config);
-		Self::from_karroumi_round_keys(rng, sbox_fn, &round_keys, security, inv, base, config)
+		Self::from_karroumi_round_keys(sbox_fn, &round_keys, inv, base, config)
 	}
 
-	pub fn from_karroumi_round_keys<S: SBox, R: Rng>(
-		rng: &mut R,
+	pub fn from_karroumi_round_keys<S: SBox>(
 		sbox_fn: impl Fn(Dual) -> S,
 		round_keys: &RoundKeys<NRM1>,
-		security: Security,
 		inv: bool,
 		base: Dual,
 		config: &KarroumiConfig<NRM1>,
@@ -314,18 +305,8 @@ impl<const NRM1: usize> Tables<NRM1> {
 		let ty = KarroumiTy::new(inv, config);
 
 		let mut tyboxes = WorkRounds::new_karroumi_tyi(&tboxes, &ty);
-		let mut mbl = <WorkRounds<NRM1>>::new_mbl();
-
-		let mut xor = Xor::identity();
-		let mut xor_mbl = Xor::identity();
 
 		let mut tboxes_last = tboxes.last;
-
-		let shift_rows = if inv {
-			&INV_SHIFT_ROWS_TAB
-		} else {
-			&SHIFT_ROWS_TAB
-		};
 
 		let standard_q = Q::for_dual(Dual::STANDARD);
 		let base_q = Q::for_dual(base);
@@ -361,95 +342,12 @@ impl<const NRM1: usize> Tables<NRM1> {
 			tboxes_last.apply_delta_inv(last_q.delta(base_q));
 		}
 
-		let Security {
-			mb,
-			l,
-			force_mbl,
-			internal_encodings,
-			force_mbl_xor,
-		} = security;
-
-		let mut tyboxes = WorkRounds(tyboxes.0);
-
-		if mb {
-			for r in RI::all::<NRM1>() {
-				let mb = MB::random(rng);
-				tyboxes.0[r].apply_mb(&mb);
-				mbl.0[r].apply_mb_inv(&mb);
-			}
-		}
-		if l {
-			let mut prev_l = None::<L>;
-
-			for r in RI::all::<NRM1>() {
-				if let Some(prev_l) = prev_l {
-					tyboxes.0[r].apply_l_inv(&prev_l, shift_rows);
-				}
-
-				let l = L::random(rng);
-				mbl.0[r].apply_l(&l);
-				prev_l = Some(l);
-			}
-
-			let l = prev_l.expect("at least one round should be processed");
-			tboxes_last.apply_l_inv(&l, shift_rows);
-		}
-
-		let uses_mbl = mb || l || force_mbl;
-
-		if internal_encodings {
-			let mut prev_round_input_encoding = None::<XorEncodingSingle>;
-
-			for r in RI::all::<NRM1>() {
-				for step in [Step::Tybox, Step::Mbl] {
-					if matches!(step, Step::Mbl) && !uses_mbl {
-						continue;
-					}
-					let (work, xor, shift) = match step {
-						Step::Tybox => (&mut tyboxes.0[r], &mut xor, shift_rows),
-						Step::Mbl => (&mut mbl.0[r], &mut xor_mbl, &ShiftRowsBijection::IDENTITY),
-					};
-					let tyi_output_coding: ColumnMap<XorEncodingSingle> = rng.random();
-
-					work.encode(
-						&prev_round_input_encoding,
-						&Some(tyi_output_coding.clone()),
-						shift,
-					);
-
-					let xor_encoding = XorEncoding::random_from_tyi(rng, tyi_output_coding);
-
-					prev_round_input_encoding = Some(xor.0[r].encode(xor_encoding));
-				}
-			}
-
-			if let Some(prev_round_input_encoding) = prev_round_input_encoding {
-				tboxes_last.encode(&prev_round_input_encoding, shift_rows);
-			}
-		}
-
-		let uses_xor_mbl = uses_mbl && internal_encodings || force_mbl_xor;
-
-		Self {
-			tyboxes,
-			tboxes_last,
-			mbl,
-			inv,
-			xor,
-			uses_mbl,
-			xor_mbl,
-			uses_xor_mbl,
-		}
+		Self::new_base(tyboxes, tboxes_last, inv)
 	}
 }
 
-enum Step {
-	Tybox,
-	Mbl,
-}
-
 // Can be replaced with RowMap<Delta>, but then it would be necessary
-// to perform computations with ShiftRows in mind, and it would be much more complicated
+// to perform computations with ShiftRows in mind, and it would be more complicated
 struct Delta4(StateMap<Delta>);
 
 #[derive(Debug, Clone, Copy)]
@@ -459,7 +357,7 @@ impl Dual4 {
 	fn random<R: Rng>(rng: &mut R) -> Self {
 		Self(RowMap::from_fn(|_| Dual::random(rng)))
 	}
-	const fn uniform(dual: Dual) -> Self {
+	pub const fn uniform(dual: Dual) -> Self {
 		Self(RowMap([dual, dual, dual, dual]))
 	}
 
@@ -817,23 +715,12 @@ mod tests {
 
 	#[test]
 	fn standard_matches_original() {
-		let rng = &mut rng();
 		let base = Dual::STANDARD;
 		let config = KarroumiConfig::<9>::standard();
 
-		let s = Security {
-			mb: false,
-			l: false,
-			internal_encodings: false,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
-
 		let tables = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			false,
 			base,
 			&config,
@@ -851,28 +738,16 @@ mod tests {
 		let base = Dual::STANDARD;
 		let config = KarroumiConfig::<9>::random(rng);
 
-		let s = Security {
-			mb: false,
-			l: false,
-			internal_encodings: false,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
-
 		let tables_enc = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			false,
 			base,
 			&config,
 		);
 		let tables_dec = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			true,
 			base,
 			&config,
@@ -895,28 +770,16 @@ mod tests {
 		let base = Dual::new(IRREDUCIBLE_POLYNOMIALS[1], 2);
 		let config = KarroumiConfig::<9>::random(rng);
 
-		let s = Security {
-			mb: true,
-			l: true,
-			internal_encodings: true,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
-
 		let tables_enc = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			false,
 			base,
 			&config,
 		);
 		let tables_dec = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			true,
 			base,
 			&config,
@@ -936,24 +799,12 @@ mod tests {
 
 	#[test]
 	fn nonstandard_base_standard_config_matches_aes() {
-		let rng = &mut rng();
-
 		let base = Dual::new(IRREDUCIBLE_POLYNOMIALS[1], 2);
 		let config = KarroumiConfig::<9>::standard();
 
-		let s = Security {
-			mb: false,
-			l: false,
-			internal_encodings: false,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
-
 		let tables_enc = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			false,
 			base,
 			&config,
@@ -976,28 +827,16 @@ mod tests {
 		let base = Dual::STANDARD;
 		let config = KarroumiConfig::<9>::random(rng);
 
-		let s = Security {
-			mb: false,
-			l: false,
-			internal_encodings: false,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
-
 		let karroumi_enc = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			false,
 			base,
 			&config,
 		);
 		let karroumi_dec = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			true,
 			base,
 			&config,
@@ -1017,22 +856,16 @@ mod tests {
 		let base = Dual::STANDARD;
 		let config = KarroumiConfig::<9>::random(rng);
 
-		let s = Security::full();
-
 		let tables_enc = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			false,
 			base,
 			&config,
 		);
 		let tables_dec = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			s,
 			true,
 			base,
 			&config,
@@ -1059,18 +892,10 @@ mod tests {
 		let base = Dual::STANDARD;
 		let config = KarroumiConfig::<13>::random(rng);
 
-		let s = Security {
-			mb: true,
-			l: true,
-			internal_encodings: true,
-			force_mbl: false,
-			force_mbl_xor: false,
-		};
-
 		let tables_enc: Tables<13> =
-			Tables::from_karroumi_key(rng, make_sbox, Aes256Key::new(key), s, false, base, &config);
+			Tables::from_karroumi_key(make_sbox, Aes256Key::new(key), false, base, &config);
 		let tables_dec: Tables<13> =
-			Tables::from_karroumi_key(rng, make_sbox, Aes256Key::new(key), s, true, base, &config);
+			Tables::from_karroumi_key(make_sbox, Aes256Key::new(key), true, base, &config);
 
 		let original = State::from_bytes([0; 16]);
 		let mut data = original;
@@ -1234,10 +1059,8 @@ mod tests {
 		};
 
 		let tables1 = Tables::from_karroumi_key(
-			rng,
 			make_sbox,
 			Aes128Key::KUNG_FU_TEST_VECTOR,
-			Security::full(),
 			false,
 			Dual::STANDARD,
 			&config1,
