@@ -63,60 +63,6 @@ impl<const NRM1: usize> KarroumiConfig<NRM1> {
 	}
 }
 
-fn expand_karroumi_keys<const NK: usize, const NRM1: usize>(
-	sboxes: &PrecomputedSBoxes<NRM1>,
-	key: Key<NK>,
-	config: &KarroumiConfig<NRM1>,
-) -> RoundKeys<NRM1> {
-	use crate::dual::compute_rcon;
-	use crate::{Word, rot_word, sub_word};
-
-	const NB: usize = 4;
-	let mut out = RoundKeys::new();
-
-	let r0_q = Q::for_dual(config.rounds[RI(0)]);
-	let mut transformed_key = key;
-	transformed_key.apply_q(r0_q);
-
-	for i in 0..NK {
-		out.set_schedule_word(i, transformed_key.word(i));
-	}
-
-	let mut rcon_idx = 1usize;
-	for i in NK..(NB * (NRM1 + 2)) {
-		let w_im1 = out.get_schedule_word(i - 1);
-		let w_imn = out.get_schedule_word(i - NK);
-
-		let round_idx = i / NB;
-		let (round_config, sbox) = if round_idx == 0 {
-			(config.rounds[RI(0)], &sboxes.rounds[RI(0)])
-		} else if round_idx <= NRM1 {
-			(
-				config.round_config(RI(round_idx - 1)),
-				&sboxes.rounds[RI(round_idx - 1)],
-			)
-		} else {
-			(config.last, &sboxes.last)
-		};
-
-		let w_i = w_imn
-			^ if i.is_multiple_of(NK) {
-				let rc = compute_rcon(rcon_idx, round_config);
-				let r = sub_word(sbox, rot_word(w_im1)) ^ Word::from_bytes([rc, 0, 0, 0]);
-				rcon_idx += 1;
-				r
-			} else if NK > 6 && (i % NK) == 4 {
-				sub_word(sbox, w_im1)
-			} else {
-				w_im1
-			};
-
-		out.set_schedule_word(i, w_i);
-	}
-
-	out
-}
-
 pub struct KarroumiTy<const NRM1: usize>(RIArr<Ty, NRM1>);
 
 impl<const NRM1: usize> KarroumiTy<NRM1> {
@@ -201,26 +147,35 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 		sboxes: &PrecomputedSBoxes<NRM1>,
 		round_keys: &RoundKeys<NRM1>,
 		inv: bool,
+		config: &KarroumiConfig<NRM1>,
 	) -> Self {
 		if inv {
-			Self::from_karroumi_round_keys_inv(sboxes, round_keys)
+			Self::from_karroumi_round_keys_inv(sboxes, round_keys, config)
 		} else {
-			Self::from_karroumi_round_keys_forward(sboxes, round_keys)
+			Self::from_karroumi_round_keys_forward(sboxes, round_keys, config)
 		}
 	}
 
 	fn from_karroumi_round_keys_forward(
 		sboxes: &PrecomputedSBoxes<NRM1>,
 		round_keys: &RoundKeys<NRM1>,
+		config: &KarroumiConfig<NRM1>,
 	) -> Self {
 		use crate::{add_shifted_round_key, sub_bytes};
 
 		let tboxes = RIArr::from_fn(|r| {
 			let sbox = sboxes.get_round(r);
+
+			let q = Q::for_dual(config.rounds[r]);
+			let mut transformed_rk = round_keys.rounds[r];
+			for pos in SPos::all() {
+				transformed_rk.0[pos.0] = q.apply(round_keys.rounds[r].0[pos.0]);
+			}
+
 			let mut rtbox = Tbox::default();
 			for (x, xbox) in rtbox.0.iter_mut() {
 				let mut state = State::from_x(x);
-				add_shifted_round_key(&mut state, &round_keys.rounds[r], &SHIFT_ROWS_TAB);
+				add_shifted_round_key(&mut state, &transformed_rk, &SHIFT_ROWS_TAB);
 				sub_bytes(sbox, &mut state);
 				*xbox = state;
 			}
@@ -228,12 +183,20 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 		});
 
 		let (a, b) = &round_keys.last;
+		let q_last = Q::for_dual(config.last);
+		let mut transformed_a = *a;
+		let mut transformed_b = *b;
+		for pos in SPos::all() {
+			transformed_a.0[pos.0] = q_last.apply(a.0[pos.0]);
+			transformed_b.0[pos.0] = q_last.apply(b.0[pos.0]);
+		}
+
 		let sbox = sboxes.get_round(RI(NRM1));
 		let last: XArr<State> = XArr(X::ALL.map(|x| {
 			let mut state = State::from_x(x);
-			add_shifted_round_key(&mut state, a, &SHIFT_ROWS_TAB);
+			add_shifted_round_key(&mut state, &transformed_a, &SHIFT_ROWS_TAB);
 			sub_bytes(sbox, &mut state);
-			add_round_key(&mut state, b);
+			add_round_key(&mut state, &transformed_b);
 			state
 		}));
 
@@ -243,39 +206,61 @@ impl<const NRM1: usize> Tboxes<NRM1> {
 	fn from_karroumi_round_keys_inv(
 		sboxes: &PrecomputedSBoxes<NRM1>,
 		round_keys: &RoundKeys<NRM1>,
+		config: &KarroumiConfig<NRM1>,
 	) -> Self {
 		use crate::{add_round_key, add_shifted_round_key, sub_bytes};
 
 		let mut tboxes = <RIArr<_, NRM1>>::from_fn(|_| Tbox::default());
 
 		let (a, b) = &round_keys.last;
+		let q_last = Q::for_dual(config.last);
+		let mut transformed_a = *a;
+		let mut transformed_b = *b;
+		for pos in SPos::all() {
+			transformed_a.0[pos.0] = q_last.apply(a.0[pos.0]);
+			transformed_b.0[pos.0] = q_last.apply(b.0[pos.0]);
+		}
+
 		let inv_sbox = PrecomputedSBox::inversed(&sboxes.get_round(RI(NRM1)));
 		let mut last_as_first: XArr<State> = Default::default();
 		for (x, xbox) in last_as_first.iter_mut() {
 			let mut state = State::from_x(x);
-			add_shifted_round_key(&mut state, b, &INV_SHIFT_ROWS_TAB);
+			add_shifted_round_key(&mut state, &transformed_b, &INV_SHIFT_ROWS_TAB);
 			sub_bytes(&inv_sbox, &mut state);
-			add_round_key(&mut state, a);
+			add_round_key(&mut state, &transformed_a);
 			*xbox = state;
 		}
 		tboxes[RI(0)] = Tbox(last_as_first);
 
 		for dec_idx in 1..NRM1 {
 			let enc_round = NRM1 - dec_idx;
+
+			let q = Q::for_dual(config.rounds[RI(enc_round)]);
+			let mut transformed_rk = round_keys.rounds[RI(enc_round)];
+			for pos in SPos::all() {
+				transformed_rk.0[pos.0] = q.apply(round_keys.rounds[RI(enc_round)].0[pos.0]);
+			}
+
 			let inv_sbox = PrecomputedSBox::inversed(&sboxes.get_round(RI(enc_round)));
 			for (x, xbox) in tboxes[RI(dec_idx)].0.iter_mut() {
 				let mut state = State::from_x(x);
 				sub_bytes(&inv_sbox, &mut state);
-				add_round_key(&mut state, &round_keys.rounds[RI(enc_round)]);
+				add_round_key(&mut state, &transformed_rk);
 				*xbox = state;
 			}
+		}
+
+		let q = Q::for_dual(config.rounds[RI(0)]);
+		let mut transformed_rk = round_keys.rounds[RI(0)];
+		for pos in SPos::all() {
+			transformed_rk.0[pos.0] = q.apply(round_keys.rounds[RI(0)].0[pos.0]);
 		}
 
 		let inv_sbox = PrecomputedSBox::inversed(&sboxes.get_round(RI(0)));
 		let last = XArr(X::ALL.map(|x| {
 			let mut state = State::from_x(x);
 			sub_bytes(&inv_sbox, &mut state);
-			add_round_key(&mut state, &round_keys.rounds[RI(0)]);
+			add_round_key(&mut state, &transformed_rk);
 			state
 		}));
 
@@ -305,7 +290,7 @@ impl<const NRM1: usize> Tables<NRM1> {
 		base: Dual,
 		config: &KarroumiConfig<NRM1>,
 	) -> Self {
-		let round_keys = expand_karroumi_keys(sboxes, key, config);
+		let round_keys = expand_karroumi_keys(key);
 		Self::from_karroumi_round_keys(sboxes, &round_keys, inv, base, config)
 	}
 
@@ -316,7 +301,7 @@ impl<const NRM1: usize> Tables<NRM1> {
 		base: Dual,
 		config: &KarroumiConfig<NRM1>,
 	) -> Self {
-		let tboxes = Tboxes::from_karroumi_round_keys(sboxes, round_keys, inv);
+		let tboxes = Tboxes::from_karroumi_round_keys(sboxes, round_keys, inv, config);
 		let ty = KarroumiTy::new(inv, config);
 
 		let mut tyboxes = WorkRounds::new_karroumi_tyi(&tboxes, &ty);
@@ -501,7 +486,7 @@ impl<const NRM1: usize> PrecomputedSBoxes4<NRM1> {
 	}
 }
 
-fn expand_karroumi_keys_4<const NK: usize, const NRM1: usize>(key: Key<NK>) -> RoundKeys<NRM1> {
+fn expand_karroumi_keys<const NK: usize, const NRM1: usize>(key: Key<NK>) -> RoundKeys<NRM1> {
 	use crate::key::expand_nonstandard_keys;
 	expand_nonstandard_keys(&PrecomputedSBox::aes_standard(), key, Dual::STANDARD)
 }
@@ -677,7 +662,7 @@ impl<const NRM1: usize> Tables<NRM1> {
 		base: Dual4,
 		config: &KarroumiConfig4<NRM1>,
 	) -> Self {
-		let round_keys = expand_karroumi_keys_4(key);
+		let round_keys = expand_karroumi_keys(key);
 		Self::from_karroumi4_round_keys(sboxes, &round_keys, inv, base, config)
 	}
 
@@ -1107,6 +1092,56 @@ mod tests {
 		tables4.cipher(&mut data4);
 
 		assert_eq!(data1, data4,);
+	}
+
+	#[test]
+	fn random_config_standard_base_matches_aes() {
+		let rng = &mut rng();
+
+		let base = Dual::STANDARD;
+		let config = KarroumiConfig::<9>::random(rng);
+		let sboxes = PrecomputedSBoxes::precompute(&config);
+
+		let tables = Tables::from_karroumi_key(
+			&sboxes,
+			Aes128Key::KUNG_FU_TEST_VECTOR,
+			false,
+			base,
+			&config,
+		);
+
+		let mut data = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
+		tables.cipher(&mut data);
+		assert_eq!(
+			data,
+			State::TWO_ONE_NINE_TWO_AES128_KUNG_FU_TEST_VECTOR,
+			"karroumi1 random config, standard base must equal standard AES; config: {config:?}"
+		);
+	}
+
+	#[test]
+	fn d4_random_config_standard_base_matches_aes() {
+		let rng = &mut rng();
+
+		let base = Dual4::STANDARD;
+		let config = KarroumiConfig4::<9>::random(rng);
+		let sboxes = PrecomputedSBoxes4::precompute(&config);
+
+		let tables = Tables::from_karroumi4_key(
+			&sboxes,
+			Aes128Key::KUNG_FU_TEST_VECTOR,
+			false,
+			base,
+			&config,
+		);
+
+		let mut data = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
+		tables.cipher(&mut data);
+		assert_eq!(
+			data,
+			State::TWO_ONE_NINE_TWO_AES128_KUNG_FU_TEST_VECTOR,
+			"karroumi4 random config, standard base must equal standard AES"
+		);
 	}
 
 	#[test]
