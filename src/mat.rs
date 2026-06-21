@@ -223,6 +223,14 @@ impl<const N: usize> MatGF2<N> {
 		}
 	}
 
+	pub fn identity_n() -> Self {
+		let mut m = Self::new();
+		for i in 0..N {
+			m.set(i, i, GF2::ONE);
+		}
+		m
+	}
+
 	#[inline]
 	pub fn get(&self, row: usize, col: usize) -> GF2 {
 		self.data[row][col]
@@ -330,6 +338,17 @@ impl<const N: usize> MatGF2<N> {
 
 		Some(result)
 	}
+	pub fn mul_vec(&self, rhs: &VecGF2<N>) -> VecGF2<N> {
+		let mut result = VecGF2::new();
+		for i in 0..N {
+			let mut sum = GF2::ZERO;
+			for j in 0..N {
+				sum += self.data[i][j] * rhs.data[j];
+			}
+			result.data[i] = sum;
+		}
+		result
+	}
 	pub fn from_array(data: [[bool; N]; N]) -> Self {
 		let mut result = Self::new();
 		for i in 0..N {
@@ -425,15 +444,7 @@ impl<const N: usize> std::ops::Mul<VecGF2<N>> for MatGF2<N> {
 	type Output = VecGF2<N>;
 
 	fn mul(self, rhs: VecGF2<N>) -> Self::Output {
-		let mut result = VecGF2::new();
-		for i in 0..N {
-			let mut sum = GF2::ZERO;
-			for j in 0..N {
-				sum += self.data[i][j] * rhs.data[j];
-			}
-			result.data[i] = sum;
-		}
-		result
+		self.mul_vec(&rhs)
 	}
 }
 

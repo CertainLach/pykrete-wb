@@ -83,6 +83,9 @@ impl Bijection4 {
 		}
 		unreachable!()
 	}
+	pub fn mapunmap(&self, v: U4, inv: bool) -> U4 {
+		if inv { self.unmap(v) } else { self.map(v) }
+	}
 	pub const fn invert(self) -> Self {
 		let mut out = [U4::_0; 16];
 

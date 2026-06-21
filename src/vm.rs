@@ -19,8 +19,10 @@ use rand::seq::SliceRandom;
 use rand::{Rng, rng};
 
 use crate::consts::{INV_SHIFT_ROWS_TAB, SHIFT_ROWS_TAB};
+use crate::encoding::LinearNetwork;
 use crate::{
-	ColumnMap, HighLow, Purpose, PurposeMap, RI, SColumn, SPos, SRow, StateMap, Step, Tables, X,
+	ColumnMap, FoldIdx, HighLow, HighLowMap, Purpose, PurposeMap, RI, SColumn, SPos, SRow,
+	StateMap, Step, Tables, U4, X, XArr,
 };
 
 #[derive(Clone, Copy)]
@@ -71,6 +73,19 @@ impl VM {
 			cont_offset: 0,
 		});
 		MemoryId(i)
+	}
+	fn alloc_memory_nibs(&mut self, data: XArr<U4>) -> MemoryId {
+		self.alloc_memory(
+			data.0
+				.chunks(2)
+				.map(|ch| {
+					assert_eq!(ch.len(), 2);
+					let l = ch[0];
+					let h = ch[1];
+					X::nibs(h, l).0
+				})
+				.collect(),
+		)
 	}
 	fn select(&mut self, mem: MemoryId, idx: Local) -> Local {
 		let to = self.alloc_local_raw();
@@ -239,7 +254,39 @@ struct LocalData {
 	last_used_at: usize,
 }
 
-pub fn vmout<const NRM1: usize>(
+fn emit_linear_network(
+	vm: &mut VM,
+	net: &LinearNetwork,
+	state: &StateMap<Local>,
+) -> StateMap<Local> {
+	StateMap::from_fn(|q| {
+		let leaves = StateMap::from_fn(|pos| {
+			let mem = vm.alloc_memory(X::all().map(|b| net.in_tab[pos][b][q].0).collect());
+			vm.select(mem, state[pos])
+		});
+		let nibs = HighLowMap::from_fn(|hl| {
+			let pos0 = SPos::from_index(0);
+			let mut acc = vm.nibble(leaves[pos0], hl);
+			for f in FoldIdx::ALL {
+				let k = f.next_spos();
+				let b = vm.nibble(leaves[k], hl);
+				let idx = vm.concat(acc, b);
+				let mem = vm.alloc_memory_nibs({
+					let node = &net.fold[q][hl][f];
+					XArr::from_fn(|idx| {
+						let (acc, b) = idx.as_nibs();
+						node[acc].map(b)
+					})
+				});
+				acc = vm.select_nib(mem, idx);
+			}
+			acc
+		});
+		vm.concat(*nibs.high(), *nibs.low())
+	})
+}
+
+pub fn emit_vm<const NRM1: usize>(
 	tables: &Tables<NRM1>,
 	lang: Language,
 	debug: bool,
@@ -247,6 +294,10 @@ pub fn vmout<const NRM1: usize>(
 ) {
 	let mut vm = VM::default();
 	let mut state = StateMap::from_fn(|i| vm.load_state(i.as_index()));
+
+	if let Some(net) = tables.input_linear.as_ref() {
+		state = emit_linear_network(&mut vm, net, &state);
+	}
 
 	let shift_rows = if tables.inv {
 		&INV_SHIFT_ROWS_TAB
@@ -284,21 +335,10 @@ pub fn vmout<const NRM1: usize>(
 
 					let n01 = |vm: &mut VM, v: SColumn, n: HighLow| {
 						let purp = PurposeMap::from_fn(|p| {
-							vm.alloc_memory(
-								X::ALL
-									.map(|x| {
-										let (h, l) = x.as_nibs();
-										xor.map(p, v, n, h, l)
-									})
-									.chunks(2)
-									.map(|ch| {
-										assert_eq!(ch.len(), 2);
-										let l = ch[0];
-										let h = ch[1];
-										X::nibs(h, l).0
-									})
-									.collect(),
-							)
+							vm.alloc_memory_nibs(XArr::from_fn(|x| {
+								let (h, l) = x.as_nibs();
+								xor.map(p, v, n, h, l)
+							}))
 						});
 						let a = vm.cascade1(aa[v], bb[v], n);
 						let a = vm.select_nib(purp[Purpose::High], a);
@@ -329,10 +369,20 @@ pub fn vmout<const NRM1: usize>(
 	}
 	state = StateMap::from_fn(|pos| state[shift_rows.map(pos)]);
 
-	let state = StateMap::from_fn(|pos| {
+	let mut state = StateMap::from_fn(|pos| {
 		let data = vm.alloc_memory(X::ALL.map(|x| tables.tboxes_last.0[x][pos].0).to_vec());
 		vm.select(data, state[pos])
 	});
+
+	if let Some(net) = tables.output_linear.as_ref() {
+		state = emit_linear_network(&mut vm, net, &state);
+	}
+	if let Some(net) = tables.output_linear_out.as_ref() {
+		state = StateMap::from_fn(|q| {
+			let mem = vm.alloc_memory(X::all().map(|b| net.0[q][b].0).collect());
+			vm.select(mem, state[q])
+		})
+	}
 
 	for (i, l) in state.0.iter().enumerate() {
 		vm.store_state(*l, i);

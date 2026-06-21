@@ -17,13 +17,13 @@ use std::fs::File;
 
 use clap::{Parser, ValueEnum};
 use pykrete_wb::dual::{Dual, IRREDUCIBLE_POLYNOMIALS};
-use pykrete_wb::encoding::ExternalEncoding;
+use pykrete_wb::encoding::{ExternalEncoding, LinearExternalEncoding};
 use pykrete_wb::karroumi::{
 	Dual4, KarroumiConfig, KarroumiConfig4, PrecomputedSBoxes, PrecomputedSBoxes4,
 };
 use pykrete_wb::key::{Aes128Key, Aes192Key, Aes256Key, RoundKeys};
 use pykrete_wb::sbox::PrecomputedSBox;
-use pykrete_wb::vm::{self, vmout};
+use pykrete_wb::vm::{self, emit_vm};
 use pykrete_wb::{Aes128Tables, Aes192Tables, Aes256Tables, Security};
 use rand::{Rng, rng};
 
@@ -57,6 +57,12 @@ enum Opts {
 	/// Applying those will make the output incompatible with standard json, but it makes it much harder
 	/// to extract the original encryption keys (given that no one has access to the external encodings).
 	CreateExternalEncoding {
+		/// Output file
+		#[clap(long)]
+		out: String,
+	},
+	/// Create a linear external encoding
+	CreateLinearEncoding {
 		/// Output file
 		#[clap(long)]
 		out: String,
@@ -113,6 +119,27 @@ enum Opts {
 		/// If prefixed with ! - the inverse of the encoding is applied
 		#[clap(long)]
 		output_encoding: Vec<String>,
+
+		/// Apply a linear (state-wide) external encoding on the input, created using
+		/// `create-linear-encoding`.
+		///
+		/// Realized as an encoded network run before the first round, so it composes with the
+		/// nonlinear `--input-encoding` (diffusion + confusion). The result is not compatible
+		/// with standard AES; the caller must apply the matching transform.
+		///
+		/// If prefixed with ! - the inverse of the encoding is applied
+		#[clap(long)]
+		input_linear_encoding: Option<String>,
+		/// Apply a linear (state-wide) external encoding on the output, created using
+		/// `create-linear-encoding`.
+		///
+		/// Realized as an encoded network run after the last round, composing with
+		/// `--output-encoding`. The result is not compatible with standard AES; the caller must
+		/// apply the matching transform.
+		///
+		/// If prefixed with ! - the inverse of the encoding is applied
+		#[clap(long)]
+		output_linear_encoding: Option<String>,
 
 		/// If not set - AES is performing the encryption operation, otherwise - decryption
 		#[clap(long)]
@@ -195,6 +222,11 @@ fn main() -> anyhow::Result<()> {
 			let f = File::create(out)?;
 			encoding.write_to(f)?;
 		}
+		Opts::CreateLinearEncoding { out } => {
+			let encoding = LinearExternalEncoding::random(&mut rng);
+			let f = File::create(out)?;
+			encoding.write_to(f)?;
+		}
 		Opts::CreateRoundKeys { t, out } => {
 			let f = File::create(out)?;
 			match_aes_ty!(t.key(AesKey).tables(_T), {
@@ -207,6 +239,8 @@ fn main() -> anyhow::Result<()> {
 			key,
 			input_encoding,
 			output_encoding,
+			input_linear_encoding,
+			output_linear_encoding,
 			inv,
 			language,
 			debug,
@@ -289,7 +323,27 @@ fn main() -> anyhow::Result<()> {
 					let output = ExternalEncoding::read_from(File::open(output)?)?;
 					tables.output_encoding(&output, inv);
 				}
-				vmout(
+				if let Some(mut input) = input_linear_encoding {
+					let inv = if input.starts_with("!") {
+						input.remove(0);
+						true
+					} else {
+						false
+					};
+					let encoding = LinearExternalEncoding::read_from(File::open(input)?)?;
+					tables.input_linear_encoding(&encoding, None, inv, &mut rng);
+				}
+				if let Some(mut output) = output_linear_encoding {
+					let inv = if output.starts_with("!") {
+						output.remove(0);
+						true
+					} else {
+						false
+					};
+					let encoding = LinearExternalEncoding::read_from(File::open(output)?)?;
+					tables.output_linear_encoding(&encoding, None, inv, &mut rng);
+				}
+				emit_vm(
 					&tables,
 					match language {
 						Language::Js => vm::Language::Js,

@@ -30,6 +30,21 @@ impl XorEncodingSingle {
 	pub fn identity() -> Self {
 		Self(Default::default())
 	}
+	pub(crate) fn nibble(&self, pos: SPos, hl: HighLow) -> Bijection4 {
+		self.0[pos.column()][SColumn(pos.row().0)][hl]
+	}
+	pub(crate) fn mapunmap(&self, pos: SPos, x: X, inv: bool) -> X {
+		let (a, b) = x.as_nibs();
+		let a = self.nibble(pos, HighLow::High).mapunmap(a, inv);
+		let b = self.nibble(pos, HighLow::Low).mapunmap(b, inv);
+		X::nibs(a, b)
+	}
+	pub(crate) fn map(&self, pos: SPos, x: X) -> X {
+		self.mapunmap(pos, x, false)
+	}
+	pub(crate) fn unmap(&self, pos: SPos, x: X) -> X {
+		self.mapunmap(pos, x, true)
+	}
 }
 impl Default for XorEncodingSingle {
 	fn default() -> Self {
@@ -124,14 +139,7 @@ impl Work {
 				let mut temp = x;
 
 				if let Some(input_encoding) = input_encoding {
-					let (a, b) = temp.as_nibs();
-					let a = input_encoding.0[shifted_index.column()]
-						[SColumn(shifted_index.row().0)][HighLow::High]
-						.unmap(a);
-					let b = input_encoding.0[shifted_index.column()]
-						[SColumn(shifted_index.row().0)][HighLow::Low]
-						.unmap(b);
-					temp = X::nibs(a, b);
+					temp = input_encoding.unmap(shifted_index, temp);
 				}
 
 				let mut res = tybox_copy[temp];
@@ -166,16 +174,7 @@ impl Tbox {
 			for pos in SPos::all() {
 				let shifted_index = shift_tables.map(pos);
 
-				let (a, b) = x.as_nibs();
-
-				let enc1 = input_encoding.0[shifted_index.column()][SColumn(shifted_index.row().0)]
-					[HighLow::High]
-					.unmap(a);
-				let enc2 = input_encoding.0[shifted_index.column()][SColumn(shifted_index.row().0)]
-					[HighLow::Low]
-					.unmap(b);
-
-				let temp = X::nibs(enc1, enc2);
+				let temp = input_encoding.unmap(shifted_index, x);
 				let res = copy[temp][pos];
 				out[pos] = res;
 			}

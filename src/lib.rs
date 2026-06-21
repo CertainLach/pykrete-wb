@@ -24,11 +24,13 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelI
 use zeroize::Zeroize;
 
 use crate::dual::{Dual, MixColCoeffs, Q};
+use crate::encoding::LinearNetwork;
 use crate::internal::XorEncoding;
 use crate::mb::{L, MB};
 
 use self::consts::{INV_SHIFT_ROWS_TAB, SHIFT_ROWS_TAB, shift_rows};
 
+use self::encoding::LinearNetworkOutput;
 use self::internal::XorEncodingSingle;
 use self::key::{Aes128Key, Aes192Key, Aes256Key, Key, RoundKeys};
 use self::tbox::{Tbox, Tboxes};
@@ -188,6 +190,9 @@ pub struct Tables<const NRM1: usize> {
 	/// Is that a decryption tables, and inverse shift rows should be used in `cipher`
 	pub(crate) inv: bool,
 
+	/// State-wide linear external input encoding, run before the first round.
+	pub(crate) input_linear: Option<LinearNetwork>,
+
 	/// Ty performs MixColumns transform, tybox is Ty+Tbox for every round except last
 	///
 	/// Consists of
@@ -224,6 +229,12 @@ pub struct Tables<const NRM1: usize> {
 	///
 	/// External output encoding might be applied here for the last round
 	pub(crate) tboxes_last: Tbox,
+
+	/// State-wide linear external output encoding, run after the last tbox.
+	pub(crate) output_linear: Option<LinearNetwork>,
+	/// Terminal per-byte table that undoes linear encoding boundary encoding and applies the external
+	/// nonlinear encoding, yielding the plain encoded ciphertext.
+	pub(crate) output_linear_out: Option<LinearNetworkOutput>,
 }
 
 enum Step {
@@ -259,6 +270,9 @@ impl<const NRM1: usize> Tables<NRM1> {
 			xor_mbl: Xor::identity(),
 			uses_xor_mbl: false,
 			uses_xor: false,
+			input_linear: None,
+			output_linear: None,
+			output_linear_out: None,
 		}
 	}
 
@@ -328,6 +342,9 @@ impl<const NRM1: usize> Tables<NRM1> {
 	}
 
 	fn cipher(&self, data: &mut State) {
+		if let Some(net) = &self.input_linear {
+			net.apply(data);
+		}
 		for r in RI::all::<NRM1>() {
 			shift_rows(
 				data,
@@ -400,6 +417,12 @@ impl<const NRM1: usize> Tables<NRM1> {
 		);
 		// sub_bytes + add_round_key
 		self.tboxes_last.apply(data);
+		if let Some(net) = &self.output_linear {
+			net.apply(data);
+		}
+		if let Some(net) = &self.output_linear_out {
+			net.apply(data);
+		}
 	}
 }
 
@@ -414,6 +437,10 @@ impl State {
 
 	const fn from_bytes(data: [u8; 16]) -> Self {
 		Self(unsafe { transmute::<[u8; 16], StateMap<X>>(data) })
+	}
+
+	fn from_fn(f: impl FnMut(SPos) -> X) -> Self {
+		Self(StateMap::from_fn(f))
 	}
 
 	fn from_x(x: X) -> Self {
@@ -720,7 +747,7 @@ pub enum HighLow {
 	Low = 1,
 }
 impl HighLow {
-	const ALL: [Self; 2] = [Self::Low, Self::High];
+	const ALL: [Self; 2] = [Self::High, Self::Low];
 	fn all() -> impl Iterator<Item = Self> {
 		Self::ALL.into_iter()
 	}
@@ -731,6 +758,39 @@ impl HighLow {
 		Self::ALL[i]
 	}
 }
+
+#[derive(Clone, Copy, PartialEq)]
+pub struct FoldIdx(U4);
+impl FoldIdx {
+	const ALL: [Self; 15] = {
+		let mut out = [const { FoldIdx(U4::_0) }; 15];
+		let mut i = 0;
+		while i < 15 {
+			out[i] = FoldIdx::from_index(i);
+			i += 1;
+		}
+		out
+	};
+	fn all() -> impl Iterator<Item = FoldIdx> {
+		Self::ALL.into_iter()
+	}
+	const fn from_index(v: usize) -> Self {
+		let v = U4::from_index(v);
+		assert!(!matches!(v, U4::_15));
+		Self(v)
+	}
+	fn as_index(self) -> usize {
+		self.0 as usize
+	}
+
+	fn next_spos(self) -> SPos {
+		SPos::from_index(self.as_index() + 1)
+	}
+	fn is_last(self) -> bool {
+		matches!(self.0, U4::_14)
+	}
+}
+
 impl<T, const N: usize> Distribution<RIArr<T, N>> for StandardUniform
 where
 	StandardUniform: Distribution<T>,
@@ -845,6 +905,16 @@ fixed_map!(ColumnMap(4 as SColumn));
 fixed_map!(XArr(256 as X));
 fixed_map!(PurposeMap(3 as Purpose));
 fixed_map!(HighLowMap(2 as HighLow));
+fixed_map!(FoldMap(15 as FoldIdx));
+
+impl<T> HighLowMap<T> {
+	fn high(&self) -> &T {
+		&self.0[0]
+	}
+	fn low(&self) -> &T {
+		&self.0[1]
+	}
+}
 
 /// Array of 256 elements
 impl XArr<X> {
@@ -1176,7 +1246,9 @@ mod tests {
 	use crate::Security;
 	use crate::decrypt;
 	use crate::encoding::ExternalEncoding;
+	use crate::encoding::LinearExternalEncoding;
 	use crate::encoding::apply_encoding;
+	use crate::encoding::apply_linear_encoding;
 	use crate::encrypt;
 	use crate::hardware::decrypt_hardware;
 	use crate::hardware::encrypt_hardware;
@@ -1323,6 +1395,172 @@ mod tests {
 
 		tables.cipher(&mut data);
 		assert_eq!(data, State::TWO_ONE_NINE_TWO_TEST_VECTOR,);
+	}
+
+	#[test]
+	fn linear_external_encoding_standalone() {
+		let rng = &mut rng();
+		let s = Security::full();
+
+		let encoding = LinearExternalEncoding::random(rng);
+
+		let mut tables = Aes128Tables::from_key(Aes128Key::KUNG_FU_TEST_VECTOR, false);
+		tables.apply_security(s, rng);
+		tables.input_linear_encoding(&encoding, None, true, rng);
+
+		let mut data = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
+		apply_linear_encoding(&mut data, &encoding, false);
+
+		tables.cipher(&mut data);
+		assert_eq!(data, State::TWO_ONE_NINE_TWO_AES128_KUNG_FU_TEST_VECTOR);
+	}
+
+	#[test]
+	fn linear_external_decoding_standalone() {
+		let rng = &mut rng();
+		let s = Security::full();
+
+		let encoding = LinearExternalEncoding::random(rng);
+
+		let mut tables = Aes128Tables::from_key(Aes128Key::KUNG_FU_TEST_VECTOR, false);
+		tables.apply_security(s, rng);
+		tables.output_linear_encoding(&encoding, None, false, rng);
+
+		let mut data = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
+		tables.cipher(&mut data);
+		assert_ne!(
+			data,
+			State::TWO_ONE_NINE_TWO_AES128_KUNG_FU_TEST_VECTOR,
+			"linear-encoded output should not match plain ciphertext"
+		);
+		apply_linear_encoding(&mut data, &encoding, true);
+
+		assert_eq!(data, State::TWO_ONE_NINE_TWO_AES128_KUNG_FU_TEST_VECTOR);
+	}
+
+	#[test]
+	fn linear_external_encoding_both_ends() {
+		let rng = &mut rng();
+		let s = Security::full();
+
+		let enc_in = LinearExternalEncoding::random(rng);
+		let enc_out = LinearExternalEncoding::random(rng);
+
+		let mut tables = Aes128Tables::from_key(Aes128Key::KUNG_FU_TEST_VECTOR, false);
+		tables.apply_security(s, rng);
+		tables.input_linear_encoding(&enc_in, None, true, rng);
+		tables.output_linear_encoding(&enc_out, None, false, rng);
+
+		let mut data = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
+		apply_linear_encoding(&mut data, &enc_in, false);
+		tables.cipher(&mut data);
+		apply_linear_encoding(&mut data, &enc_out, true);
+
+		assert_eq!(data, State::TWO_ONE_NINE_TWO_AES128_KUNG_FU_TEST_VECTOR);
+	}
+
+	#[test]
+	fn linear_and_nonlinear_external_encoding() {
+		let rng = &mut rng();
+		let s = Security::full();
+
+		// Full external encoding: linear diffusion + nonlinear byte confusion, both ends.
+		let lin_in = LinearExternalEncoding::random(rng);
+		let nl_in: ExternalEncoding = rng.random();
+		let lin_out = LinearExternalEncoding::random(rng);
+		let nl_out: ExternalEncoding = rng.random();
+
+		let mut tables = Aes128Tables::from_key(Aes128Key::KUNG_FU_TEST_VECTOR, false);
+		tables.apply_security(s, rng);
+		tables.input_linear_encoding(&lin_in, Some(&nl_in), true, rng);
+		tables.output_linear_encoding(&lin_out, Some(&nl_out), false, rng);
+
+		let mut data = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
+		// caller: nonlinear(linear(p)) on input
+		apply_linear_encoding(&mut data, &lin_in, false);
+		apply_encoding(&mut data, &nl_in, false);
+
+		tables.cipher(&mut data);
+
+		// caller: undo nonlinear then linear on output
+		apply_encoding(&mut data, &nl_out, true);
+		apply_linear_encoding(&mut data, &lin_out, true);
+
+		assert_eq!(data, State::TWO_ONE_NINE_TWO_AES128_KUNG_FU_TEST_VECTOR);
+	}
+
+	#[test]
+	fn linear_external_aes_compat() {
+		let rng = &mut rng();
+		let round_keys = Aes128Key::KUNG_FU_TEST_VECTOR.expand();
+
+		let minimal = Security {
+			mb: false,
+			l: false,
+			force_mbl: false,
+			force_xor: false,
+			force_mbl_xor: false,
+			internal_encodings: false,
+		};
+		let no_internal = Security {
+			internal_encodings: false,
+			..Security::full()
+		};
+
+		for sec in [Security::full(), no_internal, minimal] {
+			for inv in [false, true] {
+				let lin_in = LinearExternalEncoding::random(rng);
+				let nl_in: ExternalEncoding = rng.random();
+				let lin_out = LinearExternalEncoding::random(rng);
+				let nl_out: ExternalEncoding = rng.random();
+
+				let mut tables = Aes128Tables::from_unchecked_round_keys(&round_keys, inv);
+				tables.apply_security(sec, rng);
+				tables.input_linear_encoding(&lin_in, Some(&nl_in), true, rng);
+				tables.output_linear_encoding(&lin_out, Some(&nl_out), false, rng);
+
+				for _ in 0..16 {
+					let input = State::from_bytes(rng.random());
+
+					let mut data = input;
+					// caller applies the external input encoding: nonlinear(linear(.))
+					apply_linear_encoding(&mut data, &lin_in, false);
+					apply_encoding(&mut data, &nl_in, false);
+					tables.cipher(&mut data);
+					// caller removes the external output encoding in reverse
+					apply_encoding(&mut data, &nl_out, true);
+					apply_linear_encoding(&mut data, &lin_out, true);
+
+					let mut reference = input;
+					if inv {
+						decrypt(&mut reference, &round_keys);
+					} else {
+						encrypt(&mut reference, &round_keys);
+					}
+
+					assert_eq!(
+						data, reference,
+						"whitebox + external encoding must equal reference AES (inv={inv})"
+					);
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn linear_external_encoding_serialization() {
+		let rng = &mut rng();
+		let encoding = LinearExternalEncoding::random(rng);
+
+		let mut buf = Vec::new();
+		encoding.write_to(&mut buf).unwrap();
+		let decoded = LinearExternalEncoding::read_from(&buf[..]).unwrap();
+
+		let mut a = State::TWO_ONE_NINE_TWO_TEST_VECTOR;
+		let mut b = a;
+		apply_linear_encoding(&mut a, &encoding, false);
+		apply_linear_encoding(&mut b, &decoded, false);
+		assert_eq!(a, b);
 	}
 
 	#[test]
