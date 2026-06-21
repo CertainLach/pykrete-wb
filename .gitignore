@@ -1,2 +1,6 @@
 /theory
 /target
+/.direnv
+
+# Dev env is uncommitted
+/.envrc
